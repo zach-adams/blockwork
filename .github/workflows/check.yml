@@ -39,10 +39,11 @@ jobs:
           node-version: 24
       - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
-      # Playground keeps each downloaded WordPress release here.
+      # Playground keeps each downloaded WordPress release here. The key changes
+      # with the test files, since they decide which releases a shard needs.
       - uses: actions/cache@v6
         with:
           path: ~/.wordpress-playground
-          key: playground-${{ matrix.shard }}-${{ hashFiles('tools/integration-fixture.mjs', 'tools/playground.mjs') }}
+          key: playground-${{ matrix.shard }}-${{ hashFiles('tools/integration-fixture.mjs', 'tools/playground.mjs', 'tests/integration/*.test.mjs') }}
           restore-keys: playground-${{ matrix.shard }}-
       - run: node --test --test-shard=${{ matrix.shard }}/5 tests/integration/*.test.mjs
