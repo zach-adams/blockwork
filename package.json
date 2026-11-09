@@ -1,0 +1,41 @@
+{
+  "name": "blockwork",
+  "version": "0.1.1",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.4.1",
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives",
+    "lint:fix": "pnpm lint --fix",
+    "format": "oxfmt src oxlint.config.ts tools",
+    "format:check": "oxfmt --check src oxlint.config.ts tools",
+    "typecheck": "tsc --noEmit",
+    "compile": "node tools/compile.mjs",
+    "test": "pnpm compile && node --test tests/*.test.mjs",
+    "test:integration": "node --test tests/integration/*.test.mjs",
+    "test:editing": "node tests/editing/run.mjs",
+    "test:agent": "node tests/agent/run.mjs",
+    "fixture": "node tools/playground.mjs",
+    "fixture:integration": "node tools/integration-fixture.mjs",
+    "scenario": "node tools/scenario.mjs",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "build": "pnpm check && node tools/package.mjs",
+    "local:install": "pnpm check && node tools/package.mjs --development && codex plugin marketplace add . && codex plugin add blockwork@blockwork-local"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.86.0",
+    "@wp-playground/cli": "3.1.56",
+    "esbuild": "0.28.2",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "valibot": "1.5.0"
+  }
+}

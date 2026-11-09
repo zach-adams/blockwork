@@ -1,0 +1,5 @@
+allowBuilds:
+  esbuild: true
+  fs-ext-extra-prebuilt: true
+patchedDependencies:
+  '@wp-playground/cli@3.1.56': tools/patches/@wp-playground__cli@3.1.56.patch

@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+skills/blockwork/scripts/editor.js
+skills/blockwork/scripts/invoke.mjs
+skills/blockwork/scripts/bootstrap.mjs
+artifacts/

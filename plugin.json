@@ -1,0 +1,28 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "blockwork",
+  "version": "0.1.1",
+  "description": "Edit Gutenberg in an active editor or a background document, including selections, annotations, settings, shared entities, media, and terms. Uses the internal app browser by default.",
+  "author": {
+    "name": "Zach Adams",
+    "url": "https://github.com/zach-adams"
+  },
+  "license": "MIT",
+  "keywords": [
+    "wordpress",
+    "gutenberg",
+    "block-editor"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Blockwork",
+        "shortDescription": "Native Gutenberg editing",
+        "longDescription": "A desktop plugin for active Gutenberg drafts and background document editing. Uses native block registrations, permissions, editor locks, prepared receipts, and separate editor and persistence verification. Active-editor requests preserve pending work and leave the tab open. Publication changes require an explicit request. Includes settings, shared entities, media, and taxonomy operations.",
+        "developerName": "Zach Adams",
+        "category": "Productivity",
+        "defaultPrompt": "Use Blockwork to inspect the block editor for a page on my WordPress site."
+      }
+    }
+  }
+}

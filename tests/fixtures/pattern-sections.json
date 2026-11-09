@@ -1,0 +1,27 @@
+[
+  {
+    "name": "core/group",
+    "attributes": {},
+    "inner_blocks": [
+      {
+        "name": "core/group",
+        "attributes": {
+          "metadata": { "patternName": "fixture/first-section", "name": "First section" }
+        },
+        "inner_blocks": [
+          { "name": "core/paragraph", "attributes": { "content": "Synthetic pattern text." } },
+          { "name": "core/group", "attributes": {}, "inner_blocks": [] }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "core/group",
+    "attributes": {
+      "metadata": { "patternName": "fixture/second-section", "name": "Second section" }
+    },
+    "inner_blocks": [
+      { "name": "core/paragraph", "attributes": { "content": "Another synthetic section." } }
+    ]
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://playground.wordpress.net/blueprint-schema.json",
+  "preferredVersions": {
+    "php": "8.4",
+    "wp": "7.1.4"
+  },
+  "login": false,
+  "steps": [
+    {
+      "step": "defineWpConfigConsts",
+      "consts": { "DISABLE_WP_CRON": true }
+    },
+    {
+      "step": "runPHP",
+      "code": "<?php require '/wordpress/wp-load.php'; $id = wp_insert_post(['post_type' => 'page', 'post_status' => 'draft', 'post_title' => 'Blockwork integration fixture', 'post_content' => '<!-- wp:paragraph -->\n<p>Blockwork fixture.</p>\n<!-- /wp:paragraph -->\n\n<!-- wp:paragraph -->\n<p>Keep this paragraph.</p>\n<!-- /wp:paragraph -->'], true); if (is_wp_error($id)) { throw new Exception($id->get_error_message()); } update_option('blockwork_fixture_page_id', $id, false);"
+    }
+  ]
+}

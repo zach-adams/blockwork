@@ -1,0 +1,13 @@
+diff --git a/run-cli-DnHtP68W.js b/run-cli-DnHtP68W.js
+index 2617fa52da46c776087609324b4b28db5da2ab9e..8f7e9cf9d53283067434761501f657eb38265006 100644
+--- a/run-cli-DnHtP68W.js
++++ b/run-cli-DnHtP68W.js
+@@ -243,7 +243,7 @@ function Ht(e) {
+ }
+ async function Ft(e) {
+   const t = Ce(), r = await new Promise((s, a) => {
+-    const l = t.listen(e.port, () => {
++    const l = t.listen(e.port, "127.0.0.1", () => {
+       const u = l.address();
+       u === null || typeof u == "string" ? a(new Error("Server address is not available")) : s(l);
+     }).once("error", a);

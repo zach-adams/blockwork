@@ -1,0 +1,20 @@
+{
+  "name": "blockwork-local",
+  "interface": {
+    "displayName": "Blockwork local"
+  },
+  "plugins": [
+    {
+      "name": "blockwork",
+      "source": {
+        "source": "local",
+        "path": "./dist/blockwork"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
