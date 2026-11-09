@@ -33,7 +33,7 @@ with upstream defaults except statement spacing. The project spacing rule groups
 short declarations and separates control flow. The copied rules, licenses, and pinned revision live in
 `tools/oxlint/anti-slop/`. They are development tools and are excluded from the
 plugin. Installation configures `.githooks/` so each commit runs `pnpm check`;
-the GitHub Actions workflow runs `pnpm build` and, in four parallel jobs, the
+the GitHub Actions workflow runs `pnpm build` and, in five parallel jobs, the
 integration tests on pushes and pull requests. Changes to root Markdown files or
 `docs/` alone start no run.
 Agent requirements are in [AGENTS.md](../AGENTS.md#required-development-checks).
@@ -80,6 +80,20 @@ explicit file allowlist. It bundles the scripts itself, so the package's mode
 never depends on an earlier compile.
 It excludes test configuration, screenshots, receipts, Git data, and developer
 files. Packaging does not install, upload, or publish the plugin.
+
+### Releases
+
+To publish a version, set the same version in `plugin.json` and `package.json`,
+release it to `main`, then push a matching tag:
+
+```sh
+git tag v0.1.2 main
+git push origin v0.1.2
+```
+
+The Release workflow checks that the tag matches both files, runs `pnpm build`,
+and publishes a GitHub release with the release package,
+`blockwork-<version>.tar.gz`, and a link to the changes since the previous tag.
 
 ## Local desktop plugin
 

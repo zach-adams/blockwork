@@ -141,14 +141,15 @@ never ran and that a timed-out one ran once. `set-marker` takes `delay_ms`, up
 to 40 seconds, to hold a write open past the engine's 30-second wait.
 
 `tests/integration/abilities.test.mjs` runs the engine against these abilities
-on 7.0.0, 7.0.8, and 7.1.4. It signs in over HTTP, then loads the site's own
-`wp-hooks`, `wp-i18n`, `wp-private-apis`, `wp-url`, and `wp-api-fetch` scripts
-into one Node realm with the engine and sets `wp.apiFetch` up as wp-admin does.
-Method overrides, error parsing, and the nonce retry are therefore core's. Only
-the browser is replaced: `fetch` adds the login cookie. The test's last step
-sends the nonce-error ability through core's parsed `wp.apiFetch` and shows it
-running repeatedly, which is why the engine sends runs unparsed. It does not
-exercise the in-app browser; the
+on 7.1.4, and `abilities-versions.test.mjs` repeats the main steps on 7.0.0 and
+7.0.8. Both sign in over HTTP through `tests/helpers/abilities-page.mjs`, which
+loads the site's own `wp-hooks`, `wp-i18n`, `wp-private-apis`, `wp-url`, and
+`wp-api-fetch` scripts into one Node realm with the engine and sets
+`wp.apiFetch` up as wp-admin does. Method overrides, error parsing, and the
+nonce retry are therefore core's. Only the browser is replaced: `fetch` adds the
+login cookie. The 7.1.4 test's last step sends the nonce-error ability through
+core's parsed `wp.apiFetch` and shows it running repeatedly, which is why the
+engine sends runs unparsed. Neither test exercises the in-app browser; the
 [desktop abilities run](integration-results.md#abilities-run-on-october-12-2026)
 does.
 

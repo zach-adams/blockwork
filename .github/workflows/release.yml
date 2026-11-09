@@ -1,0 +1,31 @@
+name: Release
+
+# Pushing a version tag, such as v0.1.2, publishes that version.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - name: Check the tag matches the version
+        run: |
+          version=$(node -p "require('./plugin.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ] || [ "$(node -p "require('./package.json').version")" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME must be v<version>, with the same version in plugin.json and package.json."
+            exit 1
+          fi
+      - run: pnpm build
+      - run: gh release create "$GITHUB_REF_NAME" "dist/blockwork-${GITHUB_REF_NAME#v}.tar.gz" --verify-tag --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
