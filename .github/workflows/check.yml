@@ -1,12 +1,19 @@
 name: Check
 
-on: [push, pull_request, workflow_dispatch]
+# Root Markdown and docs/ change nothing the jobs check. Packaged skill docs
+# under skills/ still start a run.
+on:
+  push:
+    paths-ignore: ['*.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['*.md', 'docs/**']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  check:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -16,4 +23,26 @@ jobs:
       - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: pnpm test:integration
+
+  # Node's test runner gives each shard whole files, so new files join a shard
+  # without changes here.
+  integration:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      # Playground keeps each downloaded WordPress release here.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.wordpress-playground
+          key: playground-${{ matrix.shard }}-${{ hashFiles('tools/integration-fixture.mjs', 'tools/playground.mjs') }}
+          restore-keys: playground-${{ matrix.shard }}-
+      - run: node --test --test-shard=${{ matrix.shard }}/4 tests/integration/*.test.mjs

@@ -33,7 +33,9 @@ with upstream defaults except statement spacing. The project spacing rule groups
 short declarations and separates control flow. The copied rules, licenses, and pinned revision live in
 `tools/oxlint/anti-slop/`. They are development tools and are excluded from the
 plugin. Installation configures `.githooks/` so each commit runs `pnpm check`;
-the GitHub Actions workflow runs `pnpm build` on pushes and pull requests.
+the GitHub Actions workflow runs `pnpm build` and, in four parallel jobs, the
+integration tests on pushes and pull requests. Changes to root Markdown files or
+`docs/` alone start no run.
 Agent requirements are in [AGENTS.md](../AGENTS.md#required-development-checks).
 
 For disposable WordPress integration tests, run `pnpm test:integration`.
