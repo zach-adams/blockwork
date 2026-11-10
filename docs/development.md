@@ -67,7 +67,7 @@ use development builds. Each failure in a development build also returns
 `debug`: the underlying error's name, code, status, message, data, first stack
 frames, and causes, bounded and with nonce, token, password, and cookie values
 removed. It covers native and REST errors in the editor, host CDP errors and page
-exceptions in the invoker, receipt storage, and screenshot failures.
+exceptions in the invoker, and screenshot failures.
 `blockwork.build.debug` reports the mode.
 
 `pnpm build` makes the release package, which compiles `debug` out. Agents then
@@ -79,7 +79,7 @@ the TypeScript in `src/`, not the generated scripts.
 The build creates `dist/blockwork/` and `dist/blockwork-0.1.2.tar.gz` with an
 explicit file allowlist. It bundles the scripts itself, so the package's mode
 never depends on an earlier compile.
-It excludes test configuration, screenshots, receipts, Git data, and developer
+It excludes test configuration, screenshots, Git data, and developer
 files. Packaging does not install, upload, or publish the plugin.
 
 ### Releases
@@ -127,8 +127,8 @@ Source-only requests skip installation.
 `tools/dev-browser.mjs` lets CLI agents such as Claude Code or the Codex CLI run
 Blockwork workflows without the desktop app. It opens an `agent-browser` Chromium
 session and loads the compiled `bootstrap.mjs`. The connection to that browser
-takes the place of the desktop tab's `cdp` capability. The engine, invoker, and
-receipts are the plugin's own. The script is a development tool and is not packaged.
+takes the place of the desktop tab's `cdp` capability. The engine and invoker
+are the plugin's own. The script is a development tool and is not packaged.
 
 ```sh
 pnpm compile
@@ -421,7 +421,7 @@ tab once, then reads and edits it directly:
   cover it, cookie and consent notices are hidden for the shots and counted
   in `hidden_notices`, `states` forces CSS interactive states, and `measure` adds
   front-end element geometry and styles.
-- `save` stores a receipt durably, saves once, and verifies a fresh server read
+- `save` prepares a receipt, saves once, and verifies a fresh server read
   and native parse of the stored content.
   `revert`, `status`, and `release` finish the set.
 

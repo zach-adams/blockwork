@@ -164,7 +164,7 @@ only counts and IDs.
    at most 50 per call, and reuse a record only when its `source_url` file name
    matches. For the remaining files, use
    [`target.copy_media`](#copy-attachments-in-bounded-batches) and repeat the
-   same request until `complete` is true. Keep its upload receipts.
+   same request from the same caller until `complete` is true.
 4. Build one `media_map` for the copy. `ids` maps each source attachment ID, as
    a string key, to the target's; it is optional and holds up to 500. `urls`
    maps each source `source_url` and size URL to the target's same size, or its
@@ -314,14 +314,15 @@ and description follow the source; the source parent ID never does.
 Each item uses `bw-<copy hash>-<source ID>`, where the hash binds `copy_id`,
 both site/user targets, and `parent_id`. Repeat those fields unchanged. `ids`
 may be split into smaller batches. Exact-slug lookup finds completed copies.
-Previously verified receipts are remembered by the caller; other receipts
-require `verify_resource` before mapping, even when the slug is absent.
-Recreated callers verify those receipts once. Only a live native preparation
-that explicitly reports `attempted: false` may proceed directly to its first
-save. Otherwise an absent slug never permits another upload: an aborted request
-may still be running in PHP before attachment insertion. Keep the normal receipt
-directory across caller recreation. No copy checkpoint, digest envelope, or disk
-lock is created. If WordPress suffixes a slug, retain the different result and
+The caller keeps each upload's receipt in memory until that upload verifies,
+and a kept receipt requires `verify_resource` before mapping, even when the
+slug is absent. A recreated caller knows only the latest upload that the
+destination tab's session reports, and verifies it once. Only a live native
+preparation that explicitly reports `attempted: false` may proceed directly to
+its first save. Otherwise an absent slug never permits another upload: an
+aborted request may still be running in PHP before attachment insertion, so
+resume from the same caller. No copy checkpoint, digest envelope, or lock is
+created. If WordPress suffixes a slug, retain the different result and
 attachment ID, inspect it, and never upload that item again. A slug can collide
 with another post type even when no media record matches it.
 
@@ -365,7 +366,7 @@ native write persistence when supplied, including `different`. Source download
 failures preserve earlier verified items. Read `error`, `hint`,
 `diagnostics.stage`, and the item's `result` for repair. Validation failures
 include `issues` with field paths and expected constraints. Never change
-`copy_id` or discard receipts to bypass an unresolved result.
+`copy_id` or replace the caller to bypass an unresolved result.
 
 `call({operation: "download_media", target: {site_url, user_id}, id, timeout_ms?})`
 reads one positive attachment `id` through REST and downloads that record's own

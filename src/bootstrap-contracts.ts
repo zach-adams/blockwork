@@ -15,10 +15,6 @@ export interface HostTab {
   goto(url: string): Promise<void>;
 }
 
-export interface BootstrapOptions {
-  receipt_directory?: string;
-}
-
 export interface HostFailure extends JsonObject {
   ok: false;
   operation?: JsonObject['operation'];
@@ -105,6 +101,8 @@ export interface MediaAccess {
   call(request: JsonObject, deadline: number): Promise<MediaResult>;
   busy(): boolean;
   verified: Set<string | undefined>;
+  // Copy receipts by slug until their upload verifies.
+  receipts: Map<string, ResourceReceipt>;
   acquire(): boolean;
   release(): void;
 }
@@ -113,9 +111,8 @@ export const mediaCallers = new WeakMap<WeakKey, MediaAccess>();
 
 export interface BlockworkCaller {
   build: JsonObject;
-  readonly receipt_path: string | undefined;
+  readonly receipt: JsonObject | undefined;
   readonly target: Target | undefined;
-  read_receipt(): Promise<JsonObject | undefined>;
   connect(request: JsonObject): Promise<Connected | HostFailure>;
   create(request: unknown): Promise<JsonObject>;
   copy_media(request: unknown): Promise<JsonObject>;

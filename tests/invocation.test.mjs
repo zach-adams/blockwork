@@ -31,35 +31,13 @@ function settledCapability(result, events) {
   } };
 }
 
-test('receipt storage completes before evaluation and retains the finalized result before return', async () => {
-  const events = [];
-  const prepared = { token: 'prepared' };
-  const finalized = { token: 'finalized' };
-  const native = { ok: true, receipt: finalized, editor_result: 'verified', persistence: 'not_attempted' };
-  const result = await callBlockwork(settledCapability(native, events), 'source', { ...request, receipt: prepared }, {
-    async write_receipt(receipt) {
-      await Promise.resolve();
-      events.push(receipt.token);
-    },
-  });
-  assert.deepEqual(result, native);
-  assert.equal(events[0], 'prepared');
-  assert.equal(events[1], 'Runtime.evaluate');
-  assert.equal(events.at(-2), 'finalized');
-  assert.equal(events.at(-1), 'Runtime.releaseObject');
-  assert.equal(events.filter(event => event === 'Runtime.evaluate').length, 1);
-});
-
 test('a batch deadline bounds browser commands and retains uncertain mutation guidance', async () => {
   const commands = [];
   const deadline = Date.now() + 200;
   const result = await callBlockwork({ async send(method, params, options) {
     commands.push({ method, options });
     throw new Error('target closed');
-  } }, 'source', { operation: 'save_resource', receipt: { key: 'synthetic' } }, {
-    deadline,
-    async write_receipt() {},
-  });
+  } }, 'source', { operation: 'save_resource', receipt: { key: 'synthetic' } }, { deadline });
   assert.equal(result.error, 'browser_command_failed');
   assert.equal(result.next, 'verify_resource_do_not_replay');
   assert.ok(commands[0].options.timeoutMs <= 200);
@@ -67,79 +45,21 @@ test('a batch deadline bounds browser commands and retains uncertain mutation gu
   assert.equal(commands.length, 1);
 });
 
-test('an expired batch never starts a browser operation, including after receipt storage', async (t) => {
+test('an expired batch never starts a browser operation', async (t) => {
   const deadline = 1000000;
-  let now;
-  t.mock.method(Date, 'now', () => now);
-
-  for (const storePastDeadline of [false, true]) {
-    now = deadline - Number(storePastDeadline);
-    const events = [];
-    const result = await callBlockwork(settledCapability({ ok: true }, events), 'source', {
-      operation: 'save_resource', receipt: { key: 'synthetic' },
-    }, {
-      deadline,
-      async write_receipt() {
-        events.push('stored');
-        now = deadline;
-      },
-    });
-    assert.deepEqual(events, ['stored']);
-    assert.equal(result.error, 'browser_deadline_exhausted');
-    assert.equal(result.operation_started, false);
-    assert.equal(result.persistence, 'not_attempted');
-    assert.equal(result.editor_result, 'not_attempted');
-    assert.equal(result.next, 'retry');
-    assert.equal(result.diagnostics.stage, 'before_invocation');
-    assert.match(result.hint, /No browser operation started/);
-  }
-});
-
-test('input receipt storage failure prevents the browser operation and redacts filesystem errors', async () => {
+  t.mock.method(Date, 'now', () => deadline);
   const events = [];
-  const result = await callBlockwork(settledCapability({}, events), 'source', { ...request, receipt: { token: 'prepared', extra: 'secret-input' } }, {
-    async write_receipt() { throw new Error('private-path-and-secret'); },
-  });
-  assert.equal(result.error, 'receipt_storage_failed');
+  const result = await callBlockwork(settledCapability({ ok: true }, events), 'source', {
+    operation: 'save_resource', receipt: { key: 'synthetic' },
+  }, { deadline });
+  assert.deepEqual(events, []);
+  assert.equal(result.error, 'browser_deadline_exhausted');
   assert.equal(result.operation_started, false);
-  assert.equal(result.next, 'store_receipt_before_retry');
   assert.equal(result.persistence, 'not_attempted');
   assert.equal(result.editor_result, 'not_attempted');
-  assert.deepEqual(events, []);
-  assert.equal(outsideDebug(result).includes('private-path'), false);
-  assert.equal(JSON.stringify(result).includes('secret-input'), false);
-  assert.equal(result.debug.cause.message, 'private-path-and-secret');
-});
-
-test('invalid receipt writer refuses before invocation even without an input receipt', async () => {
-  const events = [];
-  const result = await callBlockwork(settledCapability({}, events), 'source', { operation: 'prepare_save' }, {});
-  assert.equal(result.error, 'receipt_storage_failed');
-  assert.equal(result.operation_started, false);
-  assert.deepEqual(events, []);
-  assert.match(result.hint, /write_receipt/);
-});
-
-test('output receipt storage failure preserves complete successful and unsuccessful native results without replay', async () => {
-  for (const ok of [true, false]) {
-    const events = [];
-    const native = { ok, receipt: { token: 'finalized' }, editor_result: 'verified', persistence: 'not_attempted' };
-
-    if (!ok) { native.error = 'intervening_editor_change'; native.next = 'read_before_edit'; }
-
-    const result = await callBlockwork(settledCapability(native, events), 'source', request, {
-      async write_receipt() { throw new Error('private-path-and-secret'); },
-    });
-    assert.equal(result.error, 'receipt_storage_failed');
-    assert.equal(result.operation_started, true);
-    assert.equal(result.next, 'store_receipt_do_not_replay');
-    assert.deepEqual(result.operation_result, native);
-    assert.deepEqual(result.receipt, native.receipt);
-    assert.equal(result.editor_result, 'verified');
-    assert.equal(events.filter(event => event === 'Runtime.evaluate').length, 1);
-    assert.equal(events.at(-1), 'Runtime.releaseObject');
-    assert.equal(outsideDebug(result).includes('private-path'), false);
-  }
+  assert.equal(result.next, 'retry');
+  assert.equal(result.diagnostics.stage, 'before_invocation');
+  assert.match(result.hint, /No browser operation started/);
 });
 
 test('invocation evaluates once, polls a long Promise, and releases the fulfilled result', async () => {
@@ -327,7 +247,7 @@ test('preparation failures allow a fresh plan without receipts or uncertain-muta
           { name: '[[PromiseState]]', value: { value: 'fulfilled' } },
         ] };
         throw new Error('Target closed');
-      } }, 'source', { operation }, { async write_receipt() { assert.fail('no receipt was returned'); } });
+      } }, 'source', { operation });
       assert.equal(result.next, 'retry');
       assert.equal(result.diagnostics.stage, stage);
       assert.match(result.hint, /writes no WordPress content/);
@@ -368,7 +288,7 @@ test('lost upload preparation reports decoded bytes and observational guidance w
   }
 });
 
-test('upload size is checked before any browser command or receipt storage', async () => {
+test('upload size is checked before any browser command', async () => {
   for (const invoke of [callBlockwork, release.callBlockwork]) {
     const methods = [];
     const capability = settledCapability({ ok: true }, methods);
@@ -380,9 +300,7 @@ test('upload size is checked before any browser command or receipt storage', asy
 
     for (const size of [limit + 1, limit + 2, 7500226]) {
       upload.base64 = Buffer.alloc(size).toString('base64');
-      const result = await invoke(capability, 'source', { operation: 'prepare_media', upload, receipt: { token: 'must-not-store' } }, {
-        async write_receipt() { assert.fail('oversized preparation must not store a receipt'); },
-      });
+      const result = await invoke(capability, 'source', { operation: 'prepare_media', upload });
       assert.equal(result.error, 'upload_too_large');
       assert.equal(result.operation_started, false);
       assert.equal(result.persistence, 'not_attempted');

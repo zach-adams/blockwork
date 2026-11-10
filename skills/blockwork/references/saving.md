@@ -9,7 +9,7 @@ const saved = await blockwork.save(); // background
 
 `save` makes two page calls. The first checks the editor, the signed-in user,
 and the saved record, refuses an unrequested publication change, and returns a
-receipt that the caller stores. The second rereads the saved record to confirm no
+receipt that the caller keeps. The second rereads the saved record to confirm no
 other writer changed it, confirms the draft has not changed, calls Gutenberg's
 `savePost` once, and compares a fresh REST read and native parse with the receipt.
 A verified result has `persistence: "verified"`, `status`, `link`, `editor_url`, `revisions`, and `valid`. `editor_url` opens the
@@ -30,13 +30,13 @@ one. With `preservation_status: "verified_after_read"` it means the edit and
 unsupported content were preserved exactly, not that the whole document is
 supported.
 
-Both page calls share a 45-second caller deadline, including receipt storage
-between them. If preparation uses the budget, the second call refuses with
-`browser_deadline_exhausted`, `operation_started: false`, and
-`persistence: "not_attempted"`. If observation times out after the save may have
-started, persistence is `uncertain`. Keep the stored receipt, call `status()`
-until `busy` is false, and reconcile with `recover`. Never replay that save.
-The deadline stops observation; it does not cancel a page job or WordPress write.
+Both page calls share a 45-second caller deadline. If preparation uses the
+budget, the second call refuses with `browser_deadline_exhausted`,
+`operation_started: false`, and `persistence: "not_attempted"`. If observation
+times out after the save may have started, persistence is `uncertain`. Keep
+`blockwork.receipt`, call `status()` until `busy` is false, and reconcile with
+`recover`. Never replay that save. The deadline stops observation; it does not
+cancel a page job or WordPress write.
 
 Verified persistence covers content and fields exposed through the document's
 REST schema. It cannot verify plugin-owned metadata absent from REST. For a
@@ -178,7 +178,7 @@ such as a `capture_page` caller, `release()` returns `ok: true` with
 ## Document recovery without reopening an editor
 
 If the original editor is unusable, run `recover` in an owned authenticated
-wp-admin tab with the site target and the complete stored save receipt, after
+wp-admin tab with the site target and the complete save receipt, after
 any known in-flight request settles. It reads native REST state, takes no editor
 lock, and never saves or replays the edit. Only a match reports verified
 persistence; block validity is unavailable because no Gutenberg document loads.

@@ -17,7 +17,6 @@ Only the latest release gets fixes.
 
 - The WordPress site open in the app's browser, through the editor's data stores
   and the REST API with the signed-in user's cookie and nonce.
-- Save receipts in `~/.local/share/blockwork/receipts/` on your computer.
 
 It runs no server, stores no passwords, and talks to no service besides the
 desktop app and your site.

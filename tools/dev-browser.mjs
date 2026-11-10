@@ -122,13 +122,7 @@ async function start(args) {
 
   console.log(
     JSON.stringify(
-      {
-        page: await browser('get', 'url'),
-        agent_browser_session: session,
-        profile,
-        receipts: join(directory, 'receipts'),
-        log: logPath,
-      },
+      { page: await browser('get', 'url'), agent_browser_session: session, profile, log: logPath },
       null,
       2,
     ),
@@ -296,10 +290,7 @@ async function load(tab) {
   const bootstrap = `${pathToFileURL(join(scripts, 'bootstrap.mjs')).href}?build=${build}`;
   const { createBlockwork } = await import(bootstrap);
 
-  return {
-    build,
-    blockwork: await createBlockwork(tab, { receipt_directory: join(directory, 'receipts') }),
-  };
+  return { build, blockwork: await createBlockwork(tab) };
 }
 
 async function buildHash() {

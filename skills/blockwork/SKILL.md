@@ -35,12 +35,8 @@ const blockwork = await createBlockwork(tab);
 ```
 
 Read the browser's CDP documentation before any CDP command. Keep `blockwork`
-at REPL top level. Saves keep a receipt in `~/.local/share/blockwork/receipts/`.
-When your sandbox can't write there, `createBlockwork` throws `EPERM`, so pass a
-folder you can write from the start, and to every later caller:
-`createBlockwork(tab, { receipt_directory: "/ABSOLUTE/WRITABLE/FOLDER" })`. If
-the host tool, CDP capability, or package-file access is missing, report the gap
-and stop. Never attach external CDP, install a local
+at REPL top level. If the host tool, CDP capability, or package-file access is
+missing, report the gap and stop. Never attach external CDP, install a local
 browser, or evaluate the engine through CDP yourself.
 
 Host output fills context fast. Blockwork never needs a tab's accessibility
@@ -197,8 +193,9 @@ Check `ok`. Every failure has `error`, a `hint`, and `next`. Follow `next`.
 - `status_required` or a host failure on a change: call `status()` until `busy`
   is false and read `last_request`; its `error` says why a change failed. Never
   repeat a change whose outcome you have not confirmed.
-- An uncertain save keeps its receipt. Reconcile it with `recover` as described
-  in [recovery](references/recovery.md#uncertain-saves).
+- An uncertain save leaves its receipt in `blockwork.receipt`. Reconcile it
+  with `recover` as described in
+  [recovery](references/recovery.md#uncertain-saves).
 - `next: "report_uncertain_do_not_replay"`: a plugin ability may have changed
   the site and nothing can check it. Tell the user; never run it again.
 - After a REPL reset, an interrupted turn, or a context summary, read

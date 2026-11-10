@@ -1,9 +1,8 @@
-import { readFile, mkdir, writeFile, rename, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import * as v from 'valibot';
+import { JsonObjectSchema } from './contracts';
 import type { JsonObject, JsonValue, MediaMap, Target, Width } from './contracts';
 import type { ResourceReceipt } from './resources';
 import type * as Invocation from './invocation';
@@ -30,7 +29,6 @@ import {
   pageWidths,
 } from './bootstrap-contracts';
 import type {
-  BootstrapOptions,
   HostTab,
   HostFailure,
   EngineSuccess,
@@ -57,10 +55,7 @@ import type {
 // Bundled beside the compiled invoker. This host helper never opens a browser or
 // chooses a tab; the caller supplies the exact host tab. Its cdp capability
 // runs the engine and takes screenshots, and create navigates it with goto.
-export async function createBlockwork(
-  tab: HostTab,
-  options: BootstrapOptions = {},
-): Promise<BlockworkCaller> {
+export async function createBlockwork(tab: HostTab): Promise<BlockworkCaller> {
   const capability = await tab.capabilities.get('cdp');
   const source = await readFile(new URL('./editor.js', import.meta.url), 'utf8');
   const invokerUrl = new URL('./invoke.mjs', import.meta.url);
@@ -85,31 +80,12 @@ export async function createBlockwork(
 
   // Development builds add the underlying error to failures as `debug`.
   build.debug = debug;
-  const directory =
-    options.receipt_directory ?? join(homedir(), '.local', 'share', 'blockwork', 'receipts');
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  // One file per distinct receipt, so a later save or resource write never
-  // overwrites the record of an earlier uncertain one.
-  let receiptPath: string | undefined;
-  const storage = {
-    async write_receipt(receipt: JsonObject) {
-      const path = join(directory, `${hash(JSON.stringify(receipt))}.json`);
-      await writeFile(`${path}.pending`, JSON.stringify(receipt), {
-        encoding: 'utf8',
-        mode: 0o600,
-      });
-      await rename(`${path}.pending`, path);
-      receiptPath = path;
-    },
-  };
-
+  // The latest receipt a page call returned. Only an unsettled write needs it,
+  // and the page refuses another write until that one settles.
+  let receipt: JsonObject | undefined;
   // Host failures leave the page operation's outcome unknown. Further changes
   // wait until status() shows it settled, so nothing is ever replayed.
-  const hostFailures = [
-    'browser_command_failed',
-    'browser_operation_pending',
-    'receipt_storage_failed',
-  ];
+  const hostFailures = ['browser_command_failed', 'browser_operation_pending'];
   const mutations = ['edit', 'prepare_save', 'save', 'revert', 'release'];
   // These take a site-only target, which connect already confirmed.
   const siteOperations = [
@@ -214,10 +190,13 @@ export async function createBlockwork(
       // A tab size a failed reset left behind is undone before other work.
       const unreset = overridden && !inView ? await resetSize(request.operation) : undefined;
       // SAFETY: The bundled engine owns its operation-specific result contracts.
-      const result = (await callBlockwork(capability, source, request, {
-        ...storage,
-        deadline,
-      })) as T | HostFailure;
+      const result = (await callBlockwork(capability, source, request, { deadline })) as
+        | T
+        | HostFailure;
+
+      if (v.is(JsonObjectSchema, result.receipt)) {
+        receipt = result.receipt;
+      }
 
       if (
         !result.ok &&
@@ -1123,18 +1102,15 @@ export async function createBlockwork(
   let signInWaits = 0;
   const caller: BlockworkCaller = {
     build,
-    get receipt_path() {
-      return receiptPath;
+    get receipt() {
+      return receipt;
     },
     get target() {
       return target;
     },
-    async read_receipt() {
-      return receiptPath ? JSON.parse(await readFile(receiptPath, 'utf8')) : undefined;
-    },
     connect,
     create,
-    copy_media: (request) => copyMedia(caller, request, directory, withDebug),
+    copy_media: (request) => copyMedia(caller, request, withDebug),
     read: (request) => editor('read', request),
     edit: (request) => editor('edit', request),
     // A width shows a device preview, and in a background tab may resize
@@ -1582,8 +1558,7 @@ export async function createBlockwork(
         next: signInWaits < 6 ? 'wait_for_sign_in' : 'ask_user',
       };
     },
-    // Two page calls: the first returns the receipt, which is stored durably
-    // before the second call writes to WordPress.
+    // Two page calls: the first returns the receipt the second one needs.
     async save(request = {}) {
       const deadline = Date.now() + 45000;
       const prepared = await editor('prepare_save', request, false, deadline);
@@ -1658,6 +1633,7 @@ export async function createBlockwork(
     },
     busy: () => held || busy,
     verified: new Set(),
+    receipts: new Map(),
     acquire() {
       if (held || busy) {
         return false;
@@ -1679,7 +1655,6 @@ export async function createBlockwork(
 async function copyMedia(
   caller: BlockworkCaller,
   input: unknown,
-  directory: string,
   withDebug: typeof Invocation.withDebug,
 ): Promise<JsonObject> {
   const parsed = v.safeParse(CopySchema, input);
@@ -1756,7 +1731,7 @@ async function copyMedia(
       next: waiting ? 'wait_for_media_copy' : 'resume_media_copy',
       hint: waiting
         ? 'A caller or page operation is running. Wait, then repeat copy_media.'
-        : 'Resume with the same copy_id, targets, and receipt directory. Use media_map when complete.',
+        : 'Resume with this caller and the same copy_id and targets. Use media_map when complete.',
       ...failure,
     };
   };
@@ -1805,7 +1780,7 @@ async function copyMedia(
             : 'media_copy_operation_failed',
           label === 'fetch' && result.hint
             ? result.hint
-            : 'Follow items[].result.hint, then resume the same copy. Keep upload receipts and never replay an uncertain upload, even when its slug is absent.',
+            : 'Follow items[].result.hint, then resume the same copy with this caller, which keeps its upload receipts. Never replay an uncertain upload, even when its slug is absent.',
           { result },
         );
       }
@@ -1828,46 +1803,6 @@ async function copyMedia(
       }
 
       statuses.set(access, status);
-    }
-
-    stage = 'receipts';
-    const receipts = new Map<string, ResourceReceipt>();
-
-    for (const name of await readdir(directory)) {
-      if (!ready()) {
-        return summary();
-      }
-
-      if (!/^[a-f0-9]{64}\.json$/.test(name)) {
-        continue;
-      }
-
-      const receipt: ResourceReceipt = JSON.parse(await readFile(join(directory, name), 'utf8'));
-      const desiredSlug = receipt.desired?.slug;
-
-      if (
-        receipt.kind !== 'media' ||
-        receipt.action !== 'create' ||
-        receipt.target?.site_url !== request.target.site_url ||
-        receipt.target?.user_id !== request.target.user_id ||
-        !v.is(v.string(), desiredSlug) ||
-        !desiredSlug.startsWith(`bw-${key}-`)
-      ) {
-        continue;
-      }
-
-      if (receipts.has(desiredSlug) && receipts.get(desiredSlug)?.key !== receipt.key) {
-        throw new MediaCopyError(
-          'media_copy_receipts_ambiguous',
-          'Different receipts share this copy slug. Inspect and verify those receipts; do not upload again or change copy_id.',
-        );
-      }
-
-      receipts.set(desiredSlug, receipt);
-    }
-
-    if (!ready()) {
-      return summary();
     }
 
     const found = await to<InspectedMedia>(
@@ -1899,8 +1834,15 @@ async function copyMedia(
       }
 
       let record: MediaRecord | undefined = matches[0];
-      let receipt = receipts.get(slug);
       const native = statuses.get(destination)!;
+      let receipt = destination.receipts.get(slug);
+
+      // A recreated caller adopts the page's latest upload and keeps it until it verifies.
+      if (!receipt && native.receipt?.desired.slug === slug) {
+        receipt = native.receipt;
+        destination.receipts.set(slug, receipt);
+      }
+
       const owned = receipt && native.receipt?.key === receipt.key;
       item.receipt = receipt;
 
@@ -1973,6 +1915,7 @@ async function copyMedia(
           ).receipt;
           item.receipt = receipt;
           item.state = 'prepared';
+          destination.receipts.set(slug, receipt!);
         }
 
         if (!ready()) {
@@ -2011,6 +1954,7 @@ async function copyMedia(
 
       if (receipt && item.state === 'verified') {
         destination.verified.add(receipt.key);
+        destination.receipts.delete(slug);
       }
 
       item.result ??= { ok: true, persistence: 'verified', record, receipt };
@@ -2042,7 +1986,7 @@ async function copyMedia(
       hint:
         error instanceof MediaCopyError
           ? error.hint
-          : 'Repair the named stage and resume with the same copy_id and receipt directory. Retain all upload receipts; never replay an uncertain upload.',
+          : 'Repair the named stage and resume with this caller and the same copy_id and targets. Never replay an uncertain upload.',
       diagnostics: { stage },
     };
 

@@ -205,8 +205,8 @@ An unacknowledged create with differing fields, missing or ambiguous matches, an
 the first browser command. It returns `operation_started: false`,
 `editor_result: "not_attempted"`, `persistence: "not_attempted"`,
 `diagnostics.stage: "before_invocation"`, and `next: "retry"`. This request
-sent nothing. Retry within a fresh batch budget, or resume `copy_media` with
-the same copy ID and receipt directory. Earlier uncertain writes still need
+sent nothing. Retry within a fresh batch budget, or resume `copy_media` from
+the same caller with the same copy ID. Earlier uncertain writes still need
 verification before any new write.
 
 `browser_command_failed` and `browser_operation_pending` mean no page result
@@ -254,7 +254,7 @@ the host failure rules below, because the outcome is unknown.
   first. No document connection or `status()` is required for that caller.
   Retryable reads and preparations return
   `next: "rebind_browser"`; uncertain changes retain their do-not-replay
-  `next`. Keep any stored receipt separately when replacing the caller.
+  `next`. Keep the old caller's `receipt` when replacing the caller.
   If the same page and compatible session remain, reconnect preserves the live
   draft. Confirm its state; never reload the editor to repair a binding.
   Large uploads have coincided with this failure, but the cause is unknown.
@@ -509,13 +509,13 @@ WordPress's automatic draft date changes are allowed; other tracked fields must
 match.
 `diagnostics.blocks` is an unreviewed-block list, not a property diff.
 
-If a save times out or returns `save_uncertain`, keep the stored receipt and
+If a save times out or returns `save_uncertain`, keep `blockwork.receipt` and
 reconcile it read-only. A `save_uncertain` may carry
 `diagnostics.wordpress_error`, WordPress's code for the failed save; it explains
 the failure but does not prove nothing was written:
 
 ```js
-await blockwork.call({ operation: "recover", receipt: await blockwork.read_receipt() });
+await blockwork.call({ operation: "recover", receipt: blockwork.receipt });
 ```
 
 The connected caller fills in the site target. In a fresh caller in another
@@ -546,7 +546,7 @@ After a lost response, `status()` can observe a page-side operation that is stil
 running. It returns `busy`,
 `last_request` `{id, operation, outcome}` (plus `error`, the failure's code,
 when the change failed, rolled back, or partly applied), `edit_count`, `revert_available`,
-`persistence`, any stored save `receipt`, `dirty`, and `unsaved_preview`.
+`persistence`, any prepared save `receipt`, `dirty`, and `unsaved_preview`.
 Outcomes are `running`, `applied`, `rolled_back`, `partial`, `failed`,
 `uncertain`, `saved`, `stored_with_field_differences`, `reverted`, and `released`. After a release, status
 returns `released: true` with the release's `cleanup`, so a lost release

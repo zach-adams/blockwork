@@ -63,11 +63,10 @@ between callers in resumable deadline-bounded batches and returns the edit's
 `media_map`. One caller runs one operation at a time; a second call returns
 `host_operation_in_progress` without starting.
 
-Saves and resource writes store their receipt durably before WordPress is
-written, one file per receipt under `~/.local/share/blockwork/receipts/`
-(`createBlockwork(tab, {receipt_directory})` changes it).
-`blockwork.receipt_path` names the latest and `await blockwork.read_receipt()`
-returns it. Edits write no receipts. `blockwork.build` reports the package
+Saves and resource writes return a `receipt` from their preparation, before
+WordPress is written. `blockwork.receipt` holds the latest receipt any call
+returned, in memory only; Blockwork writes no files. Edits return no receipts.
+`blockwork.build` reports the package
 `version`, file hashes, and `debug`, true in a development build.
 
 When a call fails, follow its `hint` and `next`. [Recovery](recovery.md) covers
@@ -86,7 +85,8 @@ they exist, continue with them and skip `cua.rewriteDocumentation()`, which
 prints 50 to 120 KB that Blockwork doesn't need.
 
 For a lost binding, follow the steps below and call `status()` before changing
-anything. Retain any uncertain save receipt separately for read-only recovery.
+anything. A new caller starts without a `receipt`, so keep the old caller's for
+an uncertain save or resource write.
 
 ### Lost browser binding
 
@@ -133,16 +133,15 @@ Use `recoveredBlockwork` for subsequent calls. The binding repair itself does
 not reload the page. If that page still has a compatible Blockwork session,
 connect reuses it and preserves the live draft, including unsaved editor work.
 Confirm that through connect, status, and read; a closed or navigated tab cannot
-be assumed to retain it. Receipts already written to disk remain there, but the
-new caller has no previous `receipt_path`; retain the old path or receipt
-separately for an uncertain save or resource write.
+be assumed to retain it. The new caller starts without a `receipt`, so keep the
+old caller's `blockwork.receipt` for an uncertain save or resource write.
 
 When the failed request included valid `upload.base64`,
 `diagnostics.upload_bytes` reports its decoded byte count as a number. Large
 uploads have coincided with this binding failure, but its cause is unknown.
 After rebinding, try a smaller or recompressed file for a new preparation. The
 decoded upload limit is 5 MiB. Never retry an uncertain `save_resource` with
-another file; verify its stored receipt first.
+another file; verify its receipt first.
 
 ## connect
 

@@ -1,7 +1,3 @@
-import { mkdtemp, readFile, stat, mkdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -103,12 +99,10 @@ function capability(respond, requests, emulation, capture) {
 }
 
 async function hostFixture(t, respond) {
-  const directory = await mkdtemp(join(tmpdir(), 'blockwork-bootstrap-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
   const requests = [];
   const shots = [];
   const emulation = [];
-  const f = { requests, directory, shots, emulation };
+  const f = { requests, shots, emulation };
   // Replace f.capture to see the page as each screenshot finds it.
   f.capture = async ({ clip: { x, y, width, height } }) => {
     shots.push({ x, y, width, height });
@@ -127,7 +121,7 @@ async function hostFixture(t, respond) {
       return f.goto?.(url);
     },
   };
-  f.host = await createBlockwork(f.tab, { receipt_directory: directory });
+  f.host = await createBlockwork(f.tab);
 
   return f;
 }
@@ -210,18 +204,9 @@ test('copy_media keeps ordinary receipts, metadata and size mappings and resumes
   const sameCaller = await f.destination.host.copy_media(f.request);
   assert.equal(sameCaller.complete, true);
   assert.equal(f.destination.requests.filter(request => request.operation === 'verify_resource').length, 0);
-  const files = await import('node:fs/promises').then(fs => fs.readdir(f.destination.directory));
-  assert.equal(files.length, 2);
 
-  for (const name of files) {
-    assert.match(name, /^[a-f0-9]{64}\.json$/);
-    const stored = await readFile(join(f.destination.directory, name), 'utf8');
-    assert.equal(stored.includes(f.bytes.toString('base64')), false);
-    assert.equal((await stat(join(f.destination.directory, name))).mode & 0o777, 0o600);
-  }
-
-  // A new caller and empty receipt directory can still find completed copies in WordPress.
-  const rebound = await createBlockwork(f.destination.tab, { receipt_directory: f.source.directory });
+  // A new caller can still find completed copies in WordPress.
+  const rebound = await createBlockwork(f.destination.tab);
   const again = await rebound.copy_media(f.request);
   assert.equal(again.complete, true, JSON.stringify(again));
   assert.deepEqual(again.media_map, copied.media_map);
@@ -244,7 +229,7 @@ test('copy_media verifies deferred or lost save responses without another upload
     const interrupted = await f.destination.host.copy_media(f.request);
     assert.equal(interrupted.error, 'media_copy_needs_verification');
     assert.deepEqual(interrupted.media_map.ids, {});
-    const rebound = await createBlockwork(f.destination.tab, { receipt_directory: f.destination.directory });
+    const rebound = await createBlockwork(f.destination.tab);
     assert.equal((await rebound.copy_media(f.request)).complete, true);
     assert.equal(saves, 1);
     assert.equal(f.downloads.length, 1);
@@ -265,14 +250,20 @@ test('an absent slug after request abortion permits only receipt verification, e
   });
   f.request.ids = [1];
   await f.destination.host.copy_media(f.request);
+  // A recreated caller adopts the page's receipt and keeps it after the page session ends.
+  const rebound = await createBlockwork(f.destination.tab);
+  assert.equal((await rebound.copy_media(f.request)).error, 'media_copy_needs_verification');
   delete f.native.receipt;
   delete f.native.resource_id;
   f.native.attempted = false;
-  const rebound = await createBlockwork(f.destination.tab, { receipt_directory: f.destination.directory });
-  const waiting = await rebound.copy_media(f.request);
-  assert.equal(waiting.error, 'media_copy_needs_verification');
-  assert.equal(waiting.persistence, 'uncertain');
-  assert.equal(waiting.items[0].result.outcome, 'not_found');
+
+  for (const caller of [f.destination.host, rebound]) {
+    const waiting = await caller.copy_media(f.request);
+    assert.equal(waiting.error, 'media_copy_needs_verification');
+    assert.equal(waiting.persistence, 'uncertain');
+    assert.equal(waiting.items[0].result.outcome, 'not_found');
+  }
+
   assert.equal(f.destination.requests.filter(request => request.operation === 'save_resource').length, 1);
   assert.equal(f.downloads.length, 1);
 });
@@ -679,7 +670,7 @@ test('create bounds startup without connecting to a wrong post type', async (t) 
   assert.equal(f.navigations.length, 1);
 });
 
-test('save stores the preparation receipt before the second page call', async (t) => {
+test('save keeps the preparation receipt before the second page call', async (t) => {
   const receipt = { token: 'prepared', target };
   let f;
   f = await hostFixture(t, async request => {
@@ -689,7 +680,7 @@ test('save stores the preparation receipt before the second page call', async (t
     assert.equal(request.operation, 'save');
     assert.deepEqual(request.receipt, receipt);
     assert.equal(request.save_all_pending, true);
-    assert.deepEqual(await f.host.read_receipt(), receipt);
+    assert.deepEqual(f.host.receipt, receipt);
 
     return { ok: true, persistence: 'verified', receipt };
   });
@@ -733,7 +724,7 @@ test('save shares one 45-second budget and retains recovery when the write is pe
   assert.equal(result.next, 'check_status_do_not_replay');
   assert.match(result.hint, /receipt/);
   assert.match(result.hint, /Never replay an uncertain mutation/);
-  assert.deepEqual(await f.host.read_receipt(), receipt);
+  assert.deepEqual(f.host.receipt, receipt);
   assert.deepEqual(f.requests.map(request => request.operation), ['connect', 'prepare_save', 'save']);
   assert.equal((await f.host.save()).error, 'status_required');
   assert.equal(f.requests.length, 3);
@@ -757,7 +748,7 @@ test('save never submits the write if preparation consumes the shared deadline',
   assert.equal(result.operation_started, false);
   assert.equal(result.persistence, 'not_attempted');
   assert.match(result.hint, /No browser operation started/);
-  assert.deepEqual(await f.host.read_receipt(), receipt);
+  assert.deepEqual(f.host.receipt, receipt);
   assert.deepEqual(f.requests.map(request => request.operation), ['connect', 'prepare_save']);
 });
 
@@ -770,25 +761,18 @@ test('save stops after unchanged or failed preparation', async (t) => {
   }
 });
 
-test('each distinct receipt has a private hash-named file and the latest getter advances', async (t) => {
+test('the receipt getter holds the latest receipt a page call returned', async (t) => {
   const receipts = [{ token: 'first' }, { token: 'second' }];
   const f = await hostFixture(t, async request => ({ ok: true, receipt: receipts[request.index] }));
-  assert.equal(f.host.receipt_path, undefined);
-  assert.equal(await f.host.read_receipt(), undefined);
-  const paths = [];
+  assert.equal(f.host.receipt, undefined);
 
   for (const index of [0, 1, 0]) {
     await f.host.call({ operation: 'prepare_media', index });
-    const expected = join(f.directory, createHash('sha256').update(JSON.stringify(receipts[index])).digest('hex') + '.json');
-    assert.equal(f.host.receipt_path, expected);
-    assert.deepEqual(JSON.parse(await readFile(expected, 'utf8')), receipts[index]);
-    assert.equal((await stat(expected)).mode & 0o777, 0o600);
-    paths.push(expected);
+    assert.deepEqual(f.host.receipt, receipts[index]);
   }
 
-  assert.notEqual(paths[0], paths[1]);
-  assert.equal(paths[0], paths[2]);
-  assert.deepEqual(JSON.parse(await readFile(paths[1], 'utf8')), receipts[1]);
+  await f.host.call({ operation: 'resource_status' });
+  assert.deepEqual(f.host.receipt, receipts[0]);
 });
 
 test('mutation host failures require a successful idle status before another mutation', async (t) => {
@@ -844,21 +828,6 @@ test('failed save preparation waits for idle status, then prepares again without
   await f.host.status();
   assert.equal((await f.host.save()).ok, true);
   assert.deepEqual(f.requests.map(request => request.operation), ['connect', 'prepare_save', 'status', 'prepare_save']);
-});
-
-test('receipt storage failure retains the earlier receipt and blocks further mutations', async (t) => {
-  const receipt = { token: 'complete' };
-  const f = await hostFixture(t, async request => request.operation === 'connect' ? { ok: true, target } : { ok: true, receipt });
-  await f.host.connect(connection);
-  await f.host.call({ operation: 'prepare_media' });
-  const prior = f.host.receipt_path;
-  await mkdir(prior + '.pending');
-  const failed = await f.host.call({ operation: 'save', receipt });
-  assert.equal(failed.error, 'receipt_storage_failed');
-  assert.equal(failed.operation_started, false);
-  assert.deepEqual(await f.host.read_receipt(), receipt);
-  assert.equal((await f.host.edit()).error, 'status_required');
-  assert.equal(f.requests.length, 2);
 });
 
 test('overlapping calls refuse and release clears the bound target only on success', async (t) => {

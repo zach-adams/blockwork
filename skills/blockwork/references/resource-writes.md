@@ -6,7 +6,7 @@ For site targets and resource-tab setup, read
 ## Prepare media and term changes
 
 Preparation reads native REST schemas and current state but does not write. The
-caller stores its complete `receipt` before `save_resource`. Receipts can
+caller keeps its complete `receipt` for `save_resource`. Receipts can
 contain requested nonpublic text or metadata; keep them private and out of
 plugin exports. Resource writes are separate from document saves; no transaction
 spans an upload, a term change, and a post edit.
@@ -126,9 +126,7 @@ or schema failures report `unavailable`. Differing requested fields return
 at most 160 characters each, without values. This can accompany uncertain upload
 bytes; read `persistence` as well as `outcome`. A verified outcome completes the
 intended change. Missing or ambiguous creation candidates never permit another
-write. Receipts use a content hash to detect changed fields across storage and
-reload; it is not a signature. Older random-key receipts cannot use this format;
-keep them for manual inspection instead of replaying.
+write. A receipt's content hash detects changed fields; it is not a signature.
 
 A session permits a fresh preparation after a verified match. It also permits
 one after reading the exact acknowledged created resource with `different`

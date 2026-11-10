@@ -11,7 +11,6 @@ export interface BrowserCapability {
 }
 
 export interface InvocationOptions {
-  write_receipt(receipt: JsonObject): Promise<void>;
   // A caller may stop observing earlier. The page job is never replayed or cancelled.
   deadline?: number;
 }
@@ -114,16 +113,6 @@ export async function callBlockwork(
     }
   }
 
-  if (options && typeof options.write_receipt !== 'function') {
-    return receiptFailure(request);
-  }
-
-  const stored = await storeReceipt(options, request.receipt);
-
-  if (stored !== true) {
-    return receiptFailure(request, undefined, stored);
-  }
-
   return invoke(capability, source, request, options);
 }
 
@@ -213,11 +202,6 @@ async function invoke(
           }
 
           received = true;
-          const stored = await storeReceipt(options, response.result.value.receipt);
-
-          if (stored !== true) {
-            return receiptFailure(request, response.result.value, stored);
-          }
 
           return response.result.value;
         }
@@ -363,45 +347,6 @@ function failure(cause: unknown): JsonObject {
     error_name: errorNames.find((name) => name === error?.name) ?? 'other',
     reason: reasons.find(([pattern]) => pattern.test(error?.message ?? ''))?.[1] ?? 'unrecognized',
   };
-}
-
-// Resolves true once the receipt is stored, or with the storage error.
-async function storeReceipt(
-  options: InvocationOptions | undefined,
-  receipt: JsonValue | undefined,
-): Promise<true | Error> {
-  if (!options || !v.is(JsonObjectSchema, receipt)) {
-    return true;
-  }
-
-  try {
-    await options.write_receipt(receipt);
-
-    return true;
-  } catch (error) {
-    return new Error('Receipt storage failed.', { cause: error });
-  }
-}
-
-function receiptFailure(request: JsonObject, result?: JsonObject, cause?: Error): JsonObject {
-  return withDebug(
-    {
-      ok: false,
-      error: 'receipt_storage_failed',
-      operation: request.operation,
-      operation_started: Boolean(result),
-      operation_result: result,
-      receipt: result?.receipt,
-      persistence: result ? result.persistence : 'not_attempted',
-      editor_result: result ? result.editor_result : 'not_attempted',
-      diagnostics: { stage: result ? 'after_result' : 'before_invocation' },
-      next: result ? 'store_receipt_do_not_replay' : 'store_receipt_before_retry',
-      hint: result
-        ? 'The browser operation returned, but receipt storage failed. Retain the complete operation_result and its receipt, repair storage, and store that receipt without invoking the operation again. Follow operation_result.next if the operation itself failed.'
-        : 'Receipt storage is unavailable or the input receipt could not be stored. No browser operation started. Supply a working write_receipt function before invoking the requested operation.',
-    },
-    cause,
-  );
 }
 
 // What follows a change that returned no page result, where status() cannot say.

@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 import { connect } from '../../tools/browser-session.mjs';
@@ -41,7 +39,6 @@ export async function startEditingSite({ version = '7.1.4', acf = false } = {}) 
   );
   const session = `blockwork-editing-${randomUUID().slice(0, 8)}`;
   const browserArgs = ['--session', session];
-  const receipts = await mkdtemp(join(tmpdir(), 'blockwork-editing-'));
   const { createBlockwork } = await import(bootstrapUrl.href);
   const site = fixture.target.site_url;
   let browserConnection;
@@ -49,7 +46,6 @@ export async function startEditingSite({ version = '7.1.4', acf = false } = {}) 
     await execute('agent-browser', [...browserArgs, 'close']).catch(() => undefined);
     browserConnection?.close();
     await fixture.cli[Symbol.asyncDispose]();
-    await rm(receipts, { recursive: true, force: true });
   };
 
   // A failed startup never returns the disposer, and the browser would outlive this process.
@@ -209,7 +205,7 @@ export async function startEditingSite({ version = '7.1.4', acf = false } = {}) 
     get login() {
       return state.login;
     },
-    createCaller: (tab) => createBlockwork(tab, { receipt_directory: receipts }),
+    createCaller: (tab) => createBlockwork(tab),
     [Symbol.asyncDispose]: dispose,
   };
 }

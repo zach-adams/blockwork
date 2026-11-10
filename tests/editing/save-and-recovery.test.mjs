@@ -443,7 +443,7 @@ test('save deadline stops observing a committed response and recovers without re
       assert.equal(saved.next, 'check_status_do_not_replay');
       assert.ok(saved.diagnostics.budget_ms > 0 && saved.diagnostics.budget_ms <= 5000);
       assert.equal(writes, 1);
-      const receipt = await blockwork.read_receipt();
+      const receipt = blockwork.receipt;
       assert.ok(receipt);
       assert.equal((await storedDocument(site, id)).content, doc(paragraph('Desired'), paragraph('Second')));
       assert.equal((await blockwork.save()).error, 'status_required');
@@ -494,14 +494,14 @@ for (const scenario of transportCases) {
         assert.equal(saved.error, 'browser_operation_pending', JSON.stringify(saved));
         assert.equal(saved.diagnostics.stage, 'poll');
         assert.ok(saved.diagnostics.job_id);
-        assert.ok(await blockwork.read_receipt());
+        assert.ok(blockwork.receipt);
 
         return;
       }
 
       assert.equal(saved.persistence, 'uncertain', JSON.stringify(saved));
       assert.match(saved.next, /verify|recover/);
-      const receipt = await blockwork.read_receipt();
+      const receipt = blockwork.receipt;
       assert.ok(receipt);
       const blocked = await blockwork.save();
       assertGuidance(blocked);
@@ -834,7 +834,7 @@ test('verification read failure keeps committed save uncertain and recoverable',
 
     assertGuidance(result);
     assert.equal(result.persistence, 'uncertain');
-    const receipt = await blockwork.read_receipt();
+    const receipt = blockwork.receipt;
     assert.ok(receipt);
     const recovered = await blockwork.call({ operation: 'recover', receipt });
     assert.equal(recovered.outcome, 'matched_desired', JSON.stringify(recovered));
@@ -937,7 +937,7 @@ test('a later writer during save verification is never reported as the desired s
     assertGuidance(result);
     assert.equal(result.error, 'verification_mismatch');
     assert.equal(result.persistence, 'uncertain');
-    const receipt = await blockwork.read_receipt();
+    const receipt = blockwork.receipt;
     assert.ok(receipt);
     const recovered = await blockwork.call({ operation: 'recover', receipt });
     assertGuidance(recovered);
@@ -1121,7 +1121,7 @@ test('lost settings-only save cannot claim an unapplied write after a foreign fi
       await stop();
     }
 
-    const receipt = await blockwork.read_receipt();
+    const receipt = blockwork.receipt;
     await site.php(`wp_update_post(['ID' => ${id}, 'post_excerpt' => 'Foreign excerpt']);`);
     const recovered = await blockwork.call({ operation: 'recover', receipt });
     assertGuidance(recovered);
