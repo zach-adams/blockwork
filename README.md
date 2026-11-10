@@ -1,18 +1,18 @@
 # Blockwork
 
 Blockwork is a plugin for OpenAI's ChatGPT/Codex desktop app. It lets you ask the
-app's agent to edit pages and posts on your WordPress site in plain language.
+app's agent to edit pages and posts on your WordPress site in plain language. It
+runs in the app's built-in browser, so you don't install a plugin on your
+WordPress site.
 
 Without Blockwork, the agent can still edit a page by reading screenshots and
 clicking through Gutenberg, WordPress's block editor, the way a person would.
-That is slow, it can miss settings in side panels, nested blocks, and phone or
-tablet styles, and it can leave the editor in Code editor mode. Blockwork works
-with the blocks directly in the browser tab with JavaScript, checks each change
-against your site's block rules, works in its own hidden editor tab when an
-editor tab isn't already open, and tells you exactly what changed.
-
-Blockwork uses the editor's own code inside the app's built-in browser, so its
-pages match hand-made ones and you can keep editing them by hand.
+That is slow and can miss settings in side panels, nested blocks, and phone or
+tablet styles. The agent may also switch to Code editor mode, which is more
+fragile and changes your editor preferences. Blockwork works with Gutenberg
+blocks directly through the editor's JavaScript APIs and checks each change
+against your site's block rules. It uses its own hidden editor tab when one isn't
+already open, and tells you exactly what changed afterward.
 
 Blockwork is an early prototype, version 0.1.2, so expect gaps and rough edges.
 
@@ -37,12 +37,11 @@ Ask in the same words you'd use with a person who knows WordPress:
 - "Set this post's featured image and add it to the News category."
 
 Blockwork can change text, layout, colors, spacing, and typography, including
-separate settings for tablets and phones. It can upload images and other media,
-create posts, pages, and entries of your site's custom post types, and change a post's title, URL slug,
-status, template, featured image, categories, and tags. It also works with blocks
-that your theme and plugins add, and it can edit synced patterns when you ask for
-that. Editing templates and navigation menus is experimental; see
-[support status](docs/support.md).
+separate settings for tablets and phones. It can upload media, create posts,
+pages, and custom post type entries, and change a post's title, URL slug, status,
+template, featured image, categories, and tags. It also works with blocks your
+theme and plugins add, and edits synced patterns when you ask. Editing templates
+and navigation menus is experimental; see [support status](docs/support.md).
 
 ## What you need
 
@@ -58,8 +57,7 @@ that. Editing templates and navigation menus is experimental; see
 - A WordPress account that can edit the content you ask about. You sign in
   yourself, in the app's browser.
 
-You don't install anything on your WordPress site. Blockwork isn't a WordPress
-plugin, and it doesn't use a server or any service besides the desktop app.
+Blockwork doesn't use a server or any service besides the desktop app.
 
 ## Install
 
@@ -76,10 +74,10 @@ codex plugin marketplace add .
 codex plugin add blockwork@blockwork-local
 ```
 
-`pnpm package` builds the plugin in a few seconds without running the
-project's checks. Afterward, Blockwork is listed in the app's Plugins directory under the "Blockwork local"
-source. If a chat that was already open doesn't find it, reload the app. To
-update, pull the latest changes, then build and install again:
+`pnpm package` builds the plugin without running the project's checks. Blockwork
+then appears in the app's Plugins directory under "Blockwork local". If a chat
+that was already open doesn't find it, reload the app. To update, pull the
+latest changes, then build and install again:
 
 ```sh
 git pull
@@ -131,7 +129,7 @@ content such as a synced pattern are saved on their own.
   exactly as that edit left it. After a save, WordPress's revisions screen can
   restore earlier content if the site keeps revisions. Revisions don't cover the
   slug, status, parent page, categories, or tags.
-- It uses the app's built-in browser. It uses Chrome only when you ask it to.
+- It uses Chrome only when you ask it to.
 
 ## What Blockwork keeps
 
