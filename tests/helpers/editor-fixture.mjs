@@ -220,7 +220,8 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
       f.postEdits = { ...f.postEdits };
 
       for (const [name, value] of Object.entries(values)) {
-        const next = name === 'meta' ? { ...(f.postEdits.meta ?? f.post.meta), ...copy(value) } : copy(value);
+        // Gutenberg merges a meta edit into the editor's record, which a meta box form's write leaves stale.
+        const next = name === 'meta' ? { ...(f.postEdits.meta ?? (f.loadedPost ?? f.post).meta), ...copy(value) } : copy(value);
         const saved = f.post[name]?.raw ?? f.post[name];
 
         if (value === undefined || JSON.stringify(next) === JSON.stringify(saved)) delete f.postEdits[name];

@@ -62,38 +62,51 @@ test('external saved content before save refuses and identifies the field', asyn
 });
 
 test('other writers after save preparation refuse before any save request', async () => {
-  await withDocument(site, seed(), async ({ blockwork, doc: connected, tab, id }) => {
-    const target = connected.target;
-    assert.equal((await blockwork.edit({ edits: [update(0, 'Agent')] })).ok, true);
-    const prepared = await blockwork.call({ operation: 'prepare_save', target });
-    assert.equal(prepared.ok, true, JSON.stringify(prepared));
-    assert.ok(prepared.receipt);
-    await site.php(
-      `wp_update_post(['ID' => ${id}, 'post_content' => ${JSON.stringify(doc(paragraph('Other writer')))}]);`,
-    );
-    const external = await storedDocument(site, id);
-    let writes = 0;
-    const stop = await site.intercept(tab, {
-      urlPattern: '*wp-json*',
-      stage: 'Request',
-      decide: ({ request }) => {
-        if (['POST', 'PUT'].includes(request.method) && request.url.includes(`/pages/${id}`)) writes++;
+  const date = (value) => `'post_date' => '${value}', 'post_date_gmt' => '${value}'`;
 
-        return 'pass';
-      },
+  for (const [field, edit, write] of [
+    [
+      'content',
+      { edits: [update(0, 'Agent')] },
+      `'post_content' => ${JSON.stringify(doc(paragraph('Other writer')))}`,
+    ],
+    ['date_gmt', { post: { date_gmt: '2021-01-01T00:00:00' } }, date('2022-01-01 00:00:00')],
+  ]) {
+    const document = {
+      ...seed(),
+      extra: { post_date: '2020-01-01 00:00:00', post_date_gmt: '2020-01-01 00:00:00' },
+    };
+    await withDocument(site, document, async ({ blockwork, doc: connected, tab, id }) => {
+      const target = connected.target;
+      assert.equal((await blockwork.edit(edit)).ok, true);
+      const prepared = await blockwork.call({ operation: 'prepare_save', target });
+      assert.equal(prepared.ok, true, JSON.stringify(prepared));
+      assert.ok(prepared.receipt);
+      await site.php(`wp_update_post(['ID' => ${id}, ${write}]);`);
+      const external = await storedDocument(site, id);
+      let writes = 0;
+      const stop = await site.intercept(tab, {
+        urlPattern: '*wp-json*',
+        stage: 'Request',
+        decide: ({ request }) => {
+          if (['POST', 'PUT'].includes(request.method) && request.url.includes(`/pages/${id}`)) writes++;
+
+          return 'pass';
+        },
+      });
+
+      try {
+        const refused = await blockwork.call({ operation: 'save', target, receipt: prepared.receipt });
+        await assertRefused(site, id, external, refused, { error: 'saved_record_changed' });
+        assert.equal(refused.persistence, 'not_attempted');
+        assert.ok(refused.diagnostics.fields.includes(field), JSON.stringify(refused));
+        assert.match(refused.hint, /overwrite saved changes/);
+        assert.equal(writes, 0);
+      } finally {
+        await stop();
+      }
     });
-
-    try {
-      const refused = await blockwork.call({ operation: 'save', target, receipt: prepared.receipt });
-      await assertRefused(site, id, external, refused, { error: 'saved_record_changed' });
-      assert.equal(refused.persistence, 'not_attempted');
-      assert.ok(refused.diagnostics.fields.includes('content'));
-      assert.match(refused.hint, /overwrite saved changes/);
-      assert.equal(writes, 0);
-    } finally {
-      await stop();
-    }
-  });
+  }
 });
 
 test('attached typing elsewhere is preserved and a changed target refuses', async () => {

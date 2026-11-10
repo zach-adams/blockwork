@@ -429,12 +429,33 @@ function editorContext(wp: WordPress, session: Session) {
   // record and REST after autosave, and saves only send dates they edit.
   // After a native save with meta boxes, the editor's record misses what their
   // forms wrote, so adopt the stored meta keys and plugin fields once.
-  const matchesSaved = (saved: Post) => {
+  // Before a save, two more checks apply. A save sends the record's whole value
+  // of each pending field, so a pending meta object or plugin field must still
+  // match the stored one, adopted or not. A save that writes the date must find
+  // the date this editor last saw, unless the draft's date floats: WordPress
+  // moves it to the time of every save, this editor's autosaves included.
+  // Gutenberg tells floating dates the same way.
+  const matchesSaved = (saved: Post, save?: { writesDate: boolean }) => {
     const current = fields(saved);
-    const changed = fieldChanges(session.baseline, current).filter(
-      (path) => !(session.meta_box_save && metaBoxField(path[0], session.schema.taxonomy_fields)),
-    );
-    assert(!changed.length, 'saved_record_changed', { fields: fieldNames(changed) });
+    const record = fields(loadedPost());
+    const floating =
+      ['draft', 'pending', 'auto-draft'].includes(saved.status) &&
+      saved.date_gmt === saved.modified_gmt;
+    const sent = save
+      ? Object.keys(pending()).filter((name) => metaBoxField(name, session.schema.taxonomy_fields))
+      : [];
+    const changed = [
+      ...fieldChanges(session.baseline, current).filter(
+        (path) => !(session.meta_box_save && metaBoxField(path[0], session.schema.taxonomy_fields)),
+      ),
+      ...sent.flatMap((name) =>
+        fieldChanges({ [name]: record[name] ?? null }, { [name]: current[name] ?? null }),
+      ),
+      ...(save?.writesDate && !floating && saved.date_gmt !== session.persisted.date_gmt
+        ? [['date_gmt']]
+        : []),
+    ];
+    assert(!changed.length, 'saved_record_changed', { fields: [...new Set(fieldNames(changed))] });
 
     if (session.meta_box_save) {
       session.baseline = current;
@@ -2552,7 +2573,9 @@ async function prepareSave(context: Context, saveAllPending?: boolean): Promise<
   ]);
   assert(user.id === context.target.user_id, 'user_mismatch');
   assert(!schema || schema.token === session.schema.token, 'stale_settings_schema');
-  context.matchesSaved(saved);
+  context.matchesSaved(saved, {
+    writesDate: requestedNames.has('date_gmt') || Object.hasOwn(context.pending(), 'date_gmt'),
+  });
 
   // Terms, media, parents, and taxonomies that settings edits referenced must
   // still be what those edits checked.
@@ -2856,7 +2879,7 @@ async function save(
   // Another writer may have saved since preparation. This editor's own saves,
   // such as a draft autosave in the gap, move the baseline and still pass.
   try {
-    context.matchesSaved(await context.fresh());
+    context.matchesSaved(await context.fresh(), { writesDate: receipt.date_fields.length > 0 });
   } catch (error) {
     session.persistence = 'not_attempted';
     throw error;

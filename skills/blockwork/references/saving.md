@@ -127,7 +127,13 @@ The saved record must be the one this editor loaded or last saved itself. Native
 autosave from the same editor and the user's own saves keep that true. A save
 from another tab, user, or tool refuses with `saved_record_changed`, as does
 `connect`. After a native save that posted meta box forms, the meta keys and
-plugin fields those forms wrote are taken as saved. Edits and saves wait up to
+plugin fields those forms wrote are taken as saved. A save that writes meta or a
+plugin field still refuses with `saved_record_changed` when the stored value
+differs from the editor's loaded record, because Gutenberg sends the record's
+whole value and would overwrite the stored keys. Only a reload of the editor
+picks them up. A save that writes the date refuses the same way when the stored
+date changed, except for a draft whose date still floats to each save's time.
+Edits and saves wait up to
 10 seconds for a running native save, and saves also wait that long for a
 plugin's save lock, such as ACF's check after an ACF block's fields change.
 Nothing to save returns `persistence: "unchanged"`. The session stays open for

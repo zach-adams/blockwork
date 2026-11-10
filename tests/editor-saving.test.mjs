@@ -532,12 +532,11 @@ test('a requested field still at its original value does not qualify as applied 
 
 test('live save compares requested dates with the record read at preparation', async () => {
   const f = fixture();
-  f.post.date_gmt = '2026-10-01T12:00:00';
+  const originalDate = '2026-10-02T12:00:00';
+  f.post.date_gmt = originalDate;
   await f.edit();
   const edited = await f.call('edit', { post: { status: 'future', date_gmt: '2099-01-01T12:00:00' } });
   assert.equal(edited.ok, true, JSON.stringify(edited));
-  const originalDate = '2026-10-02T12:00:00';
-  f.post.date_gmt = originalDate;
   const actions = f.window.wp.data.dispatch('core/editor');
   const save = actions.savePost;
   actions.savePost = async () => { await save(); f.post.date_gmt = originalDate; };
@@ -954,6 +953,76 @@ test('save accepts a native autosave from the same editor after preparation', as
 
   const saved = await f.call('save', { receipt: prepared.receipt, save_all_pending: true });
   assert.equal(saved.ok, true, JSON.stringify(saved));
+});
+
+test('a save that writes meta refuses stored keys the editor record lacks', async () => {
+  for (const stage of ['prepare_save', 'save']) {
+    const f = fixture();
+    f.hasMetaBoxes = true;
+    f.post.meta = { note: 'Before', other: '1' };
+    f.schema = { meta: { type: 'object', properties: { note: { type: 'string' }, other: { type: 'string' } } } };
+    assert.equal((await f.call('connect', { workflow: 'attached' })).ok, true);
+    // The user's Save posts meta box forms after the REST response, so the
+    // editor's record keeps what it sent while the server moves on.
+    await f.window.wp.data.dispatch('core/editor').savePost();
+    f.loadedPost = copy(f.post);
+    const write = () => { f.post.meta = { ...f.post.meta, other: '2' }; };
+
+    if (stage === 'prepare_save') write();
+    const edited = await f.call('edit', { settings: { meta: { note: 'After' } } });
+    assert.equal(edited.ok, true, JSON.stringify(edited));
+    const prepared = await f.call('prepare_save', { save_all_pending: true });
+
+    if (stage === 'save') {
+      assert.equal(prepared.ok, true, JSON.stringify(prepared));
+      write();
+    }
+
+    const result = stage === 'save' ? await f.call('save', { receipt: prepared.receipt, save_all_pending: true }) : prepared;
+    assert.equal(result.error, 'saved_record_changed', JSON.stringify(result));
+    assert.deepEqual(copy(result.diagnostics.fields), ['meta.other']);
+    assert.equal(f.post.meta.other, '2');
+    assert.equal(f.saves, 1);
+  }
+});
+
+test('a save that writes the date refuses a date another writer changed', async () => {
+  for (const stage of ['prepare_save', 'save']) {
+    const f = fixture();
+    f.post.date_gmt = '2099-01-01T00:00:00';
+    await f.edit();
+    const edited = await f.call('edit', { post: { status: 'future', date_gmt: '2099-02-01T00:00:00' } });
+    assert.equal(edited.ok, true, JSON.stringify(edited));
+    const write = () => { f.post.date_gmt = '2099-03-01T00:00:00'; };
+
+    if (stage === 'prepare_save') write();
+    const prepared = await f.call('prepare_save');
+
+    if (stage === 'save') {
+      assert.equal(prepared.ok, true, JSON.stringify(prepared));
+      write();
+    }
+
+    const result = stage === 'save' ? await f.call('save', { receipt: prepared.receipt }) : prepared;
+    assert.equal(result.error, 'saved_record_changed', JSON.stringify(result));
+    assert.deepEqual(copy(result.diagnostics.fields), ['date_gmt']);
+    assert.equal(f.post.date_gmt, '2099-03-01T00:00:00');
+    assert.equal(f.saves, 0);
+  }
+});
+
+test('a save that sets the date accepts a floating draft date moved by autosave', async () => {
+  const f = fixture();
+  assert.equal((await f.call('connect', { workflow: 'attached' })).ok, true);
+  const edited = await f.call('edit', { post: { date_gmt: '2099-02-01T00:00:00' } });
+  assert.equal(edited.ok, true, JSON.stringify(edited));
+  const prepared = await f.call('prepare_save', { save_all_pending: true });
+  assert.equal(prepared.ok, true, JSON.stringify(prepared));
+  // WordPress moves a floating draft date to the time of each save.
+  f.autosave();
+  f.post.date_gmt = f.post.modified_gmt;
+  const saved = await f.call('save', { receipt: prepared.receipt, save_all_pending: true });
+  assert.equal(saved.persistence, 'verified', JSON.stringify(saved));
 });
 
 test('save rechecks the draft and native lock after the stored-record read', async () => {
