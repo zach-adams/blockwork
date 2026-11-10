@@ -9,7 +9,7 @@ catch what a mock can't.
 | Engine | `pnpm test:editing` | Blockwork calls in Chromium on a real editor      | About 80 minutes on a Mac with 8 GB of memory, no model usage |
 | Agent  | `pnpm test:agent`   | Natural-language requests in the real desktop app | About a minute per task, and the signed-in account's usage    |
 
-Neither runs from `pnpm check`. CI runs the two-case engine smoke selection below;
+Neither runs from `pnpm check`. CI runs the three-case engine smoke selection below;
 the full engine suite and the agent suite stay outside CI. Both need the
 `agent-browser` CLI, and the agent suite needs the desktop app. Run the cases and
 tasks a change affects;
@@ -24,12 +24,15 @@ The Check workflow's `editing-smoke` job runs on Ubuntu with Node 24 and
 10-minute job timeout. Run its exact selection locally with:
 
 ```sh
-BLOCKWORK_TEST_HERE=1 pnpm test:editing tests/editing/common-edits.test.mjs --test-name-pattern='^(change the heading and button together|a guessed edit field is refused with a useful correction)$'
+BLOCKWORK_TEST_HERE=1 pnpm test:editing tests/editing/common-edits.test.mjs tests/editing/save-and-recovery.test.mjs --test-name-pattern='^(change the heading and button together|a guessed edit field is refused with a useful correction|other writers after save preparation refuse before any save request)$'
 ```
 
 The first case edits a heading and button, saves, and reopens through
 `assertSavedCleanly`. The second checks a malformed edit through `assertRefused`.
-They share one Playground site. `BLOCKWORK_TEST_HERE=1` uses the runner's existing
+The third changes the stored content, then the stored date, between `prepare_save`
+and `save`, and checks that `save` refuses without a write request. Each file boots
+its own Playground site. The runner keeps only the last `--test-name-pattern`, so
+combine cases into one pattern. `BLOCKWORK_TEST_HERE=1` uses the runner's existing
 local override, so the command ignores `~/.config/blockwork/test-host`. GitHub's
 fresh runner has no test-host file and needs neither SSH nor the desktop app.
 

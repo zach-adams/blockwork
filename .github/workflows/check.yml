@@ -18,11 +18,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
@@ -35,15 +35,15 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - run: pnpm install --frozen-lockfile
       # Playground keeps each downloaded WordPress release here. The key changes
       # with the test files, since they decide which releases a shard needs.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.wordpress-playground
           key: playground-${{ matrix.shard }}-${{ hashFiles('tools/integration-fixture.mjs', 'tools/playground.mjs', 'tests/integration/*.test.mjs') }}
@@ -54,19 +54,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - run: pnpm install --frozen-lockfile
       - run: npm install --global agent-browser@0.41.2
       - run: agent-browser install --with-deps
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.wordpress-playground
           key: playground-editing-${{ hashFiles('tools/playground.mjs', 'tests/fixtures/**', 'tests/editing/**') }}
           restore-keys: playground-editing-
       - run: >-
           BLOCKWORK_TEST_HERE=1 pnpm test:editing tests/editing/common-edits.test.mjs
-          --test-name-pattern='^(change the heading and button together|a guessed edit field is refused with a useful correction)$'
+          tests/editing/save-and-recovery.test.mjs
+          --test-name-pattern='^(change the heading and button together|a guessed edit field is refused with a useful correction|other writers after save preparation refuse before any save request)$'
