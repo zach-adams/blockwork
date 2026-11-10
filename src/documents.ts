@@ -137,11 +137,8 @@ export interface SettingsPlan {
   values: JsonObject;
   original: JsonObject;
   meta_keys: string[];
-  schema_token: string;
   references: Reference[];
   date_fields: Array<'date_gmt'>;
-  binding_writes: Preparation['binding_writes'];
-  creation_slug?: string;
 }
 
 async function bindingMeta(
@@ -230,15 +227,7 @@ export async function prepareSettings(
   if (sharedType(input.target.post_type)) {
     assert(!input.post && !input.settings && !input.binding_writes.length, 'shared_content_only');
 
-    return {
-      values,
-      original: {},
-      meta_keys: [],
-      references,
-      schema_token: schema.token,
-      date_fields: [],
-      binding_writes: [],
-    };
+    return { values, original: {}, meta_keys: [], references, date_fields: [] };
   }
 
   for (const [key, value] of Object.entries(input.post ?? {})) {
@@ -360,11 +349,8 @@ export async function prepareSettings(
     values,
     original: Object.fromEntries(Object.keys(values).map((name) => [name, original[name]])),
     meta_keys: Object.keys(meta),
-    schema_token: schema.token,
     references,
     date_fields,
-    binding_writes: input.binding_writes,
-    creation_slug: post.status === 'auto-draft' ? input.post?.slug : undefined,
   };
 }
 
@@ -400,5 +386,5 @@ export function settingsGuide(post: Post, schema: DocumentContract) {
   const currentValues = documentFields(post, schema, ['date_gmt']);
   const values = Object.fromEntries(Object.keys(fields).map((name) => [name, currentValues[name]]));
 
-  return { fields, values, taxonomies: schema.taxonomies, schema_token: schema.token };
+  return { fields, values, taxonomies: schema.taxonomies };
 }

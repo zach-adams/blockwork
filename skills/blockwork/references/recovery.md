@@ -210,10 +210,10 @@ the same caller with the same copy ID. Earlier uncertain writes still need
 verification before any new write.
 
 `browser_command_failed` and `browser_operation_pending` mean no page result
-came back. `diagnostics` gives the `stage` (`start`, `poll`, or `result`) and
-the page `job_id` when one was returned. A busy or hidden page can hold a state
-check past its own 10-second timeout; Blockwork keeps checking the same job and
-counts those checks in `delayed_checks`. `browser_operation_pending` means no
+came back. `diagnostics` gives the `stage` (`start`, `poll`, or `result`). A
+busy or hidden page can hold a state check past its own 10-second timeout;
+Blockwork keeps checking the same job and counts those checks in
+`delayed_checks`. `browser_operation_pending` means no
 result came back within the 45-second limit; the job may still be running, or
 may have finished, so its outcome is unconfirmed. `browser_command_failed`
 adds `failure` with its `source` (`host`, `host_response`, or `page`) and an

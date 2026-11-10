@@ -736,7 +736,6 @@ export interface Session {
   target: Target;
   workflow: v.InferOutput<typeof WorkflowSchema>;
   editor_instance: string;
-  user: User;
   busy: boolean;
   schema: DocumentContract;
   persisted: Post;
@@ -763,9 +762,6 @@ export interface Session {
     draft?: DraftCheckpoint;
     plan: Plan;
     settings: SettingsPlan;
-    applied_state: string;
-    pending_before: JsonObject;
-    dirty_before: boolean;
     requested_before: JsonObject;
     references_before: SettingsPlan['references'];
     shared_references_before: Plan['references'];

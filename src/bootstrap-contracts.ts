@@ -100,7 +100,6 @@ export interface StoredMedia extends MediaResult {
 export interface MediaAccess {
   call(request: JsonObject, deadline: number): Promise<MediaResult>;
   busy(): boolean;
-  verified: Set<string | undefined>;
   // Copy receipts by slug until their upload verifies.
   receipts: Map<string, ResourceReceipt>;
   acquire(): boolean;

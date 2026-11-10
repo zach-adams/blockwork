@@ -878,7 +878,6 @@ async function connect(input: Connection): Promise<JsonObject> {
       target,
       workflow: input.workflow,
       editor_instance: crypto.randomUUID(),
-      user,
       busy: false,
       schema,
       persisted: saved,
@@ -897,7 +896,6 @@ async function connect(input: Connection): Promise<JsonObject> {
     session.busy = true;
     acquired = session;
     session.schema = schema;
-    session.user = user;
 
     if (!existing) {
       created = session;
@@ -1340,16 +1338,8 @@ function expandEdits(wp: WordPress, input: EditInput) {
   return edits;
 }
 
-function emptySettings(context: Context): SettingsPlan {
-  return {
-    values: {},
-    original: {},
-    meta_keys: [],
-    schema_token: context.session.schema.token,
-    references: [],
-    date_fields: [],
-    binding_writes: [],
-  };
+function emptySettings(): SettingsPlan {
+  return { values: {}, original: {}, meta_keys: [], references: [], date_fields: [] };
 }
 
 // The primary blocks of each edit: updated targets and new subtree roots.
@@ -2141,7 +2131,7 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     input.post || input.settings || input.binding_writes.length || input.media_bindings.length;
   let settings = hasSettings
     ? await prepareSettings(wp, input, context.livePost(), session.schema)
-    : emptySettings(context);
+    : emptySettings();
   const media = await mediaEdits(wp, input.media_bindings);
   const edits = [...requested, ...media.edits];
   const liveFields = draftBefore.fields;
@@ -2217,8 +2207,6 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
           Boolean(tabsPermission || galleryPermission || contextPermission),
         )
       : undefined;
-  const pendingBefore = context.pending();
-  const dirtyBefore = draftBefore.dirty;
   const initialize = needsNativePreparation(plan);
   let mutated = false;
   let settingsApplied = false;
@@ -2316,9 +2304,6 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     draft: footnote ? undefined : draft,
     plan,
     settings,
-    applied_state: session.expected_state,
-    pending_before: pendingBefore,
-    dirty_before: dirtyBefore,
     requested_before: requestedBefore,
     references_before: referencesBefore,
     shared_references_before: sharedReferencesBefore,

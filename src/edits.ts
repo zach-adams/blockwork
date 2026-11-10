@@ -82,7 +82,6 @@ export interface Touch extends JsonObject {
 
 export interface Plan {
   spacers?: Array<PatternSpacer & { clientId: string; ancestors: Block[] }>;
-  edits: Edit[];
   steps: Step[];
   blocks: Block[];
   target: Target;
@@ -2298,7 +2297,6 @@ export async function preparePlan(
   checkInitialSerialization(wp, original, originalRows, content, target);
 
   const steps: Step[] = [];
-  const edits: Edit[] = [];
   const liveIds = new Set(originalRows.map((row) => row.clientId));
   const changes = new Map<string, JsonObject>();
   const references: Plan['references'] = {};
@@ -2324,7 +2322,6 @@ export async function preparePlan(
       }
 
       livePath = liveRow?.path;
-      edits.push(edit);
 
       recordEditDependencies(blocks, request, edit, liveIds, touched, editIndex);
 
@@ -2468,7 +2465,7 @@ export async function preparePlan(
     Boolean(status.unsupported.length),
   );
 
-  const plan = { edits, steps, blocks, target, references, touched, spacers };
+  const plan = { steps, blocks, target, references, touched, spacers };
   checkPatternSpacers(wp, plan, blocks, true);
 
   return plan;

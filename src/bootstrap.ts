@@ -1632,7 +1632,6 @@ export async function createBlockwork(tab: HostTab): Promise<BlockworkCaller> {
       return (await call(request, true, deadline)) as MediaResult;
     },
     busy: () => held || busy,
-    verified: new Set(),
     receipts: new Map(),
     acquire() {
       if (held || busy) {
@@ -1846,9 +1845,7 @@ async function copyMedia(
       const owned = receipt && native.receipt?.key === receipt.key;
       item.receipt = receipt;
 
-      const verifiedHere =
-        destination.verified.has(receipt?.key) ||
-        (owned && native.verified && native.resource_id === record?.id);
+      const verifiedHere = owned && native.verified && native.resource_id === record?.id;
 
       if (receipt && (!record || !verifiedHere)) {
         item.state = owned && !native.attempted && !record ? 'prepared' : 'attempted';
@@ -1952,8 +1949,7 @@ async function copyMedia(
       item.state =
         item.result?.error === 'upload_bytes_different' ? 'upload_bytes_different' : 'verified';
 
-      if (receipt && item.state === 'verified') {
-        destination.verified.add(receipt.key);
+      if (item.state === 'verified') {
         destination.receipts.delete(slug);
       }
 
