@@ -132,9 +132,9 @@ content such as a synced pattern are saved on their own.
 ## What Blockwork keeps
 
 Blockwork writes no files to your computer. It adds nothing to your site except
-the changes you ask for. Content the agent reads from your site becomes part of the chat, like
-anything else the agent reads, under your ChatGPT account's data settings. Each
-request uses your plan's usage like any other agent task.
+the changes you ask for. Content the agent reads from your site becomes part of
+the chat, like anything else the agent reads, under your ChatGPT account's data
+settings. Each request uses your plan's usage like any other agent task.
 
 ## Limits
 
