@@ -1118,6 +1118,47 @@ test('a stale meta box overwriting requested REST meta reports the stored differ
   }
 });
 
+test('a meta save after a native save refuses a key the meta box wrote', async () => {
+  await site.php(
+    `update_option('bw_test_metabox','stale_registered'); update_option('bw_test_stale_schema','1');`,
+  );
+
+  try {
+    await withDocument(
+      site,
+      {
+        content: doc(paragraph('Before')),
+        meta: { fixture_panel: 'Original', fixture_late: 'Original' },
+      },
+      async ({ blockwork, tab, id }) => {
+        // The user's Save posts the meta box form after the REST save. The form
+        // stores fixture_panel, and the editor's record keeps 'Original'.
+        await site.evaluate(
+          tab,
+          `wp.data.dispatch('core/editor').editPost({title:'Saved by user'}); wp.data.dispatch('core/editor').savePost()`,
+        );
+        await waitFor(
+          site,
+          tab,
+          `!wp.data.select('core/editor').isSavingPost() && !wp.data.select('core/edit-post').isSavingMetaBoxes()`,
+        );
+        assert.equal((await storedDocument(site, id)).meta.fixture_panel?.[0], 'Before');
+        const edited = await blockwork.edit({ settings: { meta: { fixture_late: 'Agent' } } });
+        assert.equal(edited.ok, true, JSON.stringify(edited));
+        const refused = await blockwork.save({ save_all_pending: true });
+        assert.equal(refused.error, 'saved_record_changed', JSON.stringify(refused));
+        assert.ok(refused.diagnostics.fields.includes('meta.fixture_panel'));
+        const stored = await storedDocument(site, id);
+        assert.equal(stored.meta.fixture_panel?.[0], 'Before');
+        assert.equal(stored.meta.fixture_late?.[0], 'Original');
+      },
+      { workflow: 'attached' },
+    );
+  } finally {
+    await site.php(`delete_option('bw_test_metabox'); delete_option('bw_test_stale_schema');`);
+  }
+});
+
 test('notice restoration failure retains capture results and requires closing the tab', async () => {
   await withDocument(
     site,
