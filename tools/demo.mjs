@@ -368,13 +368,12 @@ async function concatenate(segments, file) {
   await rm(list);
 }
 
-// The largest GIF under GitHub's limit, trading width and frame rate down in steps.
+// GitHub shows a README image at most about 900 px wide, so a wider GIF only adds
+// download size. Width and frame rate step down until the file is under GitHub's limit.
 // A frame that matches the one before it is dropped and the earlier one held, so a
 // still screen costs little. One frame a second is kept, or the end hold would go.
 async function shrink(video, file) {
   for (const [width, fps] of [
-    [1280, 12],
-    [1120, 10],
     [960, 10],
     [800, 8],
   ]) {
