@@ -337,7 +337,7 @@ export function validateFields(
     const rawSchema = field.properties?.raw;
     const acceptsRawString =
       ['title', 'content', 'excerpt', 'caption', 'description'].includes(name) &&
-      v.is(v.string(), value);
+      typeof value === 'string';
     const valueSchema = acceptsRawString && rawSchema ? rawSchema : field;
     const checked = value === undefined ? value : restEquivalent(value, valueSchema);
     const issue = schemaIssue(checked, valueSchema, false, fieldPath);

@@ -55,10 +55,9 @@ function snapshot(wp: WordPress, target: Target, fields: () => JsonObject): Foot
     'native_readiness_unavailable',
   );
   const record = entityRecord(wp, target);
-  const content = v.is(v.function(), record.content) ? record.content(record) : record.content;
-  const resolved = v.is(v.string(), content)
-    ? content
-    : v.parse(v.object({ raw: v.string() }), content).raw;
+  const content = typeof record.content === 'function' ? record.content(record) : record.content;
+  const resolved =
+    typeof content === 'string' ? content : v.parse(v.object({ raw: v.string() }), content).raw;
   const edits = core.getEntityRecordNonTransientEdits('postType', target.post_type, target.post_id);
   const pendingKeys = Object.keys(edits).sort();
   const currentFields = v.parse(JsonObjectSchema, json(fields()));
@@ -69,9 +68,12 @@ function snapshot(wp: WordPress, target: Target, fields: () => JsonObject): Foot
 
   const pending = Object.fromEntries(
     Object.entries(edits).map(([key, value]) => {
-      assert(!v.is(v.function(), value) || key === 'content', 'unsupported_pending_settings');
+      assert(typeof value !== 'function' || key === 'content', 'unsupported_pending_settings');
 
-      return [key, v.is(v.function(), value) ? { callable: true, resolved: value(record) } : value];
+      return [
+        key,
+        typeof value === 'function' ? { callable: true, resolved: value(record) } : value,
+      ];
     }),
   );
 
@@ -154,7 +156,7 @@ async function verifySettled(
     await pause(100);
     available();
     assert(
-      !v.is(v.function(), expectedContent) || entityRecord(wp, target).content === expectedContent,
+      typeof expectedContent !== 'function' || entityRecord(wp, target).content === expectedContent,
       'prepared_content_changed',
       { stage: 'footnote_content_callback' },
     );
@@ -204,7 +206,7 @@ export async function applyExplicitFootnotes(
       available();
       permission();
       assert(
-        (!v.is(v.function(), checkpoint.content) ||
+        (typeof checkpoint.content !== 'function' ||
           entityRecord(wp, plan.target).content === checkpoint.content) &&
           same(snapshot(wp, plan.target, fields), before),
         'intervening_editor_change',

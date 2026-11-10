@@ -44,7 +44,7 @@ export async function openPatternSection(
     section.support === 'supported' &&
       !sharedReference(section.block) &&
       v.is(JsonObjectSchema, metadata) &&
-      v.is(v.string(), metadata.patternName) &&
+      typeof metadata.patternName === 'string' &&
       Boolean(metadata.patternName) &&
       !ancestors.some(
         (row) =>

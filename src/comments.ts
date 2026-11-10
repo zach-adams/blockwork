@@ -72,7 +72,7 @@ function queryFor(target: Target, discussion: JsonObject): JsonObject {
   const { pageComments, commentsPerPage, defaultCommentsPage } = discussion;
   requireComments(
     pageComments === undefined ||
-      v.is(v.boolean(), pageComments) ||
+      typeof pageComments === 'boolean' ||
       pageComments === 0 ||
       pageComments === 1 ||
       pageComments === '' ||
@@ -85,7 +85,7 @@ function queryFor(target: Target, discussion: JsonObject): JsonObject {
   requireComments(
     !pageComments ||
       ((v.is(v.number(), commentsPerPage) ||
-        (v.is(v.string(), commentsPerPage) && /^\d+$/.test(commentsPerPage))) &&
+        (typeof commentsPerPage === 'string' && /^\d+$/.test(commentsPerPage))) &&
         Number.isInteger(Number(commentsPerPage)) &&
         Number(commentsPerPage) > 0),
   );

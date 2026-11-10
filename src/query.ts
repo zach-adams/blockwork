@@ -125,7 +125,7 @@ export async function checkQueryPreviews(
 
           if (
             v.is(JsonObjectSchema, taxonomy) &&
-            v.is(v.string(), taxonomy.rest_base) &&
+            typeof taxonomy.rest_base === 'string' &&
             Array.isArray(ids) &&
             ids.length
           ) {
@@ -146,7 +146,7 @@ export async function checkQueryPreviews(
       if (
         value &&
         (!['exclude', 'parent', 'format'].includes(name) ||
-          ((Array.isArray(value) || v.is(v.string(), value)) && value.length))
+          ((Array.isArray(value) || typeof value === 'string') && value.length))
       ) {
         args[name] = value;
       }
@@ -173,7 +173,7 @@ export async function checkQueryPreviews(
     let usedPostType = postType;
     const templateSlug = context.templateSlug;
 
-    if (inherit && v.is(v.string(), templateSlug)) {
+    if (inherit && typeof templateSlug === 'string') {
       if (templateSlug.startsWith('archive-')) {
         usedPostType = templateSlug.replace('archive-', '');
         assert(
@@ -376,13 +376,14 @@ export async function prepareQueryNormalization(
       if (query.excludeCurrent !== null && (isExisting || query.excludeCurrent !== undefined)) {
         const context = queryContext(wp, after, row.path);
         const slug = context.templateSlug;
-        assert(slug === undefined || v.is(v.string(), slug), 'query_preview_context_unavailable', {
-          ...details,
-          reason: 'template_context',
-        });
+        assert(
+          slug === undefined || typeof slug === 'string',
+          'query_preview_context_unavailable',
+          { ...details, reason: 'template_context' },
+        );
         let templateType = slug === 'wp' ? 'custom' : slug;
 
-        if (v.is(v.string(), slug) && slug.includes('-') && slug.split('-').slice(1).join('-')) {
+        if (typeof slug === 'string' && slug.includes('-') && slug.split('-').slice(1).join('-')) {
           templateType = slug.split('-')[0];
         }
 
@@ -615,7 +616,7 @@ export async function preparePostDates(
       );
       const value = record && record[field];
       assert(
-        v.is(v.string(), value) &&
+        typeof value === 'string' &&
           /^\d{4}-\d\d-\d\dT/.test(value) &&
           Number.isFinite(Date.parse(value)),
         'post_date_context_unavailable',

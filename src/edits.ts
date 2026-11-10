@@ -1192,7 +1192,7 @@ export async function prepareCompleteGallery(
   requireGallery(!gallery.attributes.linkTarget && !gallery.attributes.rel, 'linkTarget');
   // An explicit nonempty caption avoids importing the attachment's caption.
   requireGallery(
-    v.is(v.string(), image.attributes.caption) && image.attributes.caption.length > 0,
+    typeof image.attributes.caption === 'string' && image.attributes.caption.length > 0,
     'caption',
   );
   const nativeFinal: JsonObject = {
@@ -1264,10 +1264,10 @@ export async function prepareCompleteGallery(
     binding.size === 'full' ? fullUrl || inspected.source_url : selectedSize?.source_url;
   requireGallery(same(image.attributes.url, selectedUrl), 'url');
   const local: JsonObject = { link: inspected.link };
-  requireGallery(v.is(v.string(), local.link), 'link');
+  requireGallery(typeof local.link === 'string', 'link');
 
   if (fullUrl) {
-    requireGallery(v.is(v.string(), fullUrl), 'fullUrl');
+    requireGallery(typeof fullUrl === 'string', 'fullUrl');
     local.fullUrl = fullUrl;
   }
 
@@ -2032,7 +2032,7 @@ export async function preparePlan(
           'style_unavailable',
         );
         const old = existing?.attributes.className ?? '';
-        assert(v.is(v.string(), old), 'invalid_class_name');
+        assert(typeof old === 'string', 'invalid_class_name');
         const names = new Set(catalog.items.map((item) => `is-style-${item.name}`));
         const classes = old.split(/\s+/).filter((item) => item && !names.has(item));
 
@@ -2194,7 +2194,7 @@ function settle(): Promise<void> {
   return new Promise<void>((resolve) => {
     void pause(50).then(resolve);
 
-    if (v.is(v.function(), window.requestAnimationFrame)) {
+    if (typeof window.requestAnimationFrame === 'function') {
       window.requestAnimationFrame(() => resolve());
     }
   });

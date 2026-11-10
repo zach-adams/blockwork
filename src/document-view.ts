@@ -2,7 +2,6 @@ import type { Block, WordPress } from './wordpress';
 import { preparePostDates } from './query';
 import { pause } from './timing';
 import { requireCondition as assert } from './inspection';
-import * as v from 'valibot';
 
 // The Navigation screen wraps the entity in one editor-only core/navigation.
 // Paths and persisted content refer to its children, never to that wrapper.
@@ -65,7 +64,7 @@ export async function restoreDraftDirty(wp: WordPress, originallyDirty: boolean)
     const pending = wp.data.select('core').getEntityRecordNonTransientEdits('postType', type, id);
     const entries = Object.entries(pending);
     assert(
-      entries.length === 1 && entries[0][0] === 'content' && v.is(v.function(), entries[0][1]),
+      entries.length === 1 && entries[0][0] === 'content' && typeof entries[0][1] === 'function',
       'revert_dirty_state_changed',
     );
     const actions = wp.data.dispatch('core');

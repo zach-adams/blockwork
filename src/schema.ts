@@ -70,12 +70,12 @@ export function schemaIssue(
   const matches = (type: string): boolean => {
     switch (type) {
       case 'string':
-        return v.is(v.string(), value);
+        return typeof value === 'string';
       case 'rich-text':
         // A block attribute type, which REST validation does not know.
-        return lenient || v.is(v.string(), value);
+        return lenient || typeof value === 'string';
       case 'boolean':
-        return v.is(v.boolean(), value);
+        return typeof value === 'boolean';
       case 'integer':
         // WordPress takes an integer of any size.
         return lenient ? Number.isInteger(value) : Number.isSafeInteger(value);
@@ -126,7 +126,7 @@ export function schemaIssue(
     }
   }
 
-  if (typed && v.is(v.string(), value)) {
+  if (typed && typeof value === 'string') {
     // WordPress counts characters, where `length` counts UTF-16 units.
     const characters = [...value].length;
 

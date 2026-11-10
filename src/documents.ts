@@ -335,7 +335,7 @@ export async function prepareSettings(
 
   if (values.status === 'future') {
     assert(
-      v.is(v.string(), values.date_gmt) && Date.parse(`${values.date_gmt}Z`) > Date.now(),
+      typeof values.date_gmt === 'string' && Date.parse(`${values.date_gmt}Z`) > Date.now(),
       'future_date_required',
     );
   }

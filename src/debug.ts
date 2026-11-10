@@ -33,7 +33,10 @@ function scrub(text: string, limit: number): string {
 // Building a failure must never throw, whatever was thrown.
 function text(cause: unknown, limit: number): string {
   try {
-    return scrub(v.is(v.string(), cause) ? cause : (JSON.stringify(cause) ?? String(cause)), limit);
+    return scrub(
+      typeof cause === 'string' ? cause : (JSON.stringify(cause) ?? String(cause)),
+      limit,
+    );
   } catch {
     return 'unreadable';
   }

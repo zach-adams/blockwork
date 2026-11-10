@@ -192,7 +192,7 @@ export async function readReference(
       : { ref: reference.entity_id };
 
   // Area is part of a template part's identity, not a caller-selected override.
-  if (reference.entity_type === 'wp_template_part' && v.is(v.string(), post.area)) {
+  if (reference.entity_type === 'wp_template_part' && typeof post.area === 'string') {
     attributes.area = post.area;
   }
 
@@ -254,7 +254,7 @@ export async function referenceGraph(
           wp.data.resolveSelect?.('core').getCurrentTheme?.(),
         );
         assert(
-          v.is(JsonObjectSchema, current) && v.is(v.string(), current.stylesheet),
+          v.is(JsonObjectSchema, current) && typeof current.stylesheet === 'string',
           'current_theme_unavailable',
         );
         theme = current.stylesheet;

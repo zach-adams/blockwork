@@ -1,4 +1,3 @@
-import * as v from 'valibot';
 import type { JsonObject, Receipt } from './contracts';
 import type { WordPress } from './wordpress';
 import { readTree, storedState } from './inspection';
@@ -32,7 +31,7 @@ export async function receiptMatch(
 
   const contentless = await Promise.all(forms.map((form) => contentlessHash(form)));
 
-  if (!contentless.includes(receipt.fields_hash) || !v.is(v.string(), fields.content)) {
+  if (!contentless.includes(receipt.fields_hash) || typeof fields.content !== 'string') {
     return 'different';
   }
 

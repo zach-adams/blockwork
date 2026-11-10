@@ -99,7 +99,7 @@ export function retargetBlocks(
       at.length === 0 &&
       v.is(JsonObjectSchema, item) &&
       ['core/navigation-link', 'core/navigation-submenu'].includes(String(where.block_name)) &&
-      v.is(v.string(), item.url) &&
+      typeof item.url === 'string' &&
       Object.hasOwn(links.urls, item.url)
     ) {
       const { id: _sourceId, ...attributes } = item;
@@ -108,7 +108,7 @@ export function retargetBlocks(
       return id === undefined ? attributes : { ...attributes, id };
     }
 
-    if (v.is(v.string(), item)) {
+    if (typeof item === 'string') {
       return move(item, where, at);
     }
 
@@ -122,7 +122,7 @@ export function retargetBlocks(
       siblings.some((name) => {
         const sibling = value[name];
 
-        return v.is(v.string(), sibling) && targetOf(sibling.trim()) !== undefined;
+        return typeof sibling === 'string' && targetOf(sibling.trim()) !== undefined;
       });
 
     if (attachment) {

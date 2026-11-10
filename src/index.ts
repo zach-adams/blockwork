@@ -60,14 +60,14 @@ export async function blockwork(request: AnyRequest) {
     ? String(request.operation)
     : 'unknown';
   let code =
-    'error' in result && v.is(v.string(), result.error) ? result.error : 'operation_failed';
+    'error' in result && typeof result.error === 'string' ? result.error : 'operation_failed';
 
   // Plain HTTP on a real host lacks both APIs, so the first use of either throws
   // an error with no code. A failure that may have written keeps its own answer.
   if (
     code === 'operation_failed' &&
     (!('persistence' in result) || result.persistence === 'not_attempted') &&
-    (!globalThis.crypto?.subtle || !v.is(v.function(), globalThis.crypto.randomUUID))
+    (!globalThis.crypto?.subtle || typeof globalThis.crypto.randomUUID !== 'function')
   ) {
     code = 'secure_origin_required';
   }
@@ -78,7 +78,7 @@ export async function blockwork(request: AnyRequest) {
     next = 'verify_resource_do_not_replay';
   }
 
-  if ('next' in result && v.is(v.string(), result.next)) {
+  if ('next' in result && typeof result.next === 'string') {
     next = result.next;
   }
 

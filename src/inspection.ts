@@ -119,7 +119,7 @@ export function richTextInput(
   schema?: Attribute,
 ): JsonValue | undefined {
   return mapRichText(value, schema, (text) =>
-    v.is(v.string(), text) ? escapeBareLessThan(escapeBareAmpersands(text)) : text,
+    typeof text === 'string' ? escapeBareLessThan(escapeBareAmpersands(text)) : text,
   );
 }
 
@@ -476,7 +476,7 @@ export function textFor(wp: WordPress, row: BlockSummary): string {
     ...richText,
   ];
   const text = [...new Set(values)]
-    .flatMap((value) => (v.is(v.string(), value) ? [value] : []))
+    .flatMap((value) => (typeof value === 'string' ? [value] : []))
     .join(' ')
     .replace(/<[^>]*>/g, ' ');
 
@@ -525,9 +525,9 @@ function mediaReferences(rows: BlockSummary[]): MediaReference[] {
       const urlKeys = key === 'id' ? ['url', 'src', 'href'] : [`${prefix}Url`, `${prefix}Src`];
       const url = urlKeys
         .map((name) => value[name])
-        .find((candidate) => v.is(v.string(), candidate) && candidate.includes('/uploads/'));
+        .find((candidate) => typeof candidate === 'string' && candidate.includes('/uploads/'));
 
-      if ((key === 'id' || prefix) && v.is(attachmentId, item) && v.is(v.string(), url)) {
+      if ((key === 'id' || prefix) && v.is(attachmentId, item) && typeof url === 'string') {
         const reference = found.get(item) ?? { id: item, url, paths: [] };
         found.set(item, reference);
 
@@ -582,16 +582,16 @@ export async function projectInspection(
 ): Promise<JsonObject> {
   const selector = options.blocks;
   const scopeRow =
-    !v.is(v.string(), selector) && 'client_id' in selector && selector.client_id
+    typeof selector !== 'string' && 'client_id' in selector && selector.client_id
       ? liveRow(rows, selector.client_id, 'blocks.client_id')
       : undefined;
   const scope = scopeRow?.path ?? [];
-  const limit = v.is(v.string(), selector) ? 60 : Math.min(selector.limit, 50);
-  const depth = !v.is(v.string(), selector) && 'depth' in selector ? selector.depth : undefined;
+  const limit = typeof selector === 'string' ? 60 : Math.min(selector.limit, 50);
+  const depth = typeof selector !== 'string' && 'depth' in selector ? selector.depth : undefined;
   const maxDepth = depth === undefined ? undefined : Math.min(depth, 8);
   const clamped: JsonObject = {};
 
-  if (!v.is(v.string(), selector) && selector.limit > 50) {
+  if (typeof selector !== 'string' && selector.limit > 50) {
     clamped.limit = 50;
   }
 
@@ -600,7 +600,7 @@ export async function projectInspection(
   }
 
   const names =
-    !v.is(v.string(), selector) && 'name' in selector && selector.name
+    typeof selector !== 'string' && 'name' in selector && selector.name
       ? blockNamePattern(selector.name)
       : undefined;
   const selected = rows.filter((row) => {
@@ -630,7 +630,7 @@ export async function projectInspection(
   });
 
   const detailed =
-    !v.is(v.string(), selector) &&
+    typeof selector !== 'string' &&
     (!('search' in selector || 'name' in selector) || selector.attributes);
 
   const blocks = await Promise.all(
@@ -684,11 +684,11 @@ export async function projectInspection(
     validity: validity(rows),
   };
 
-  if (scopeRow && !v.is(v.string(), selector) && 'markup' in selector && selector.markup) {
+  if (scopeRow && typeof selector !== 'string' && 'markup' in selector && selector.markup) {
     result.markup = wp.blocks.serialize([scopeRow.block]);
   }
 
-  if (scopeRow && !v.is(v.string(), selector) && 'media' in selector && selector.media) {
+  if (scopeRow && typeof selector !== 'string' && 'media' in selector && selector.media) {
     result.media = mediaReferences(rows.filter((row) => containsPath(scopeRow.path, row.path)));
   }
 
@@ -773,7 +773,7 @@ export async function projectInspection(
       };
 
       if (attribute.source === 'meta') {
-        if (v.is(v.string(), attribute.meta)) {
+        if (typeof attribute.meta === 'string') {
           item.meta_key = attribute.meta;
         }
 

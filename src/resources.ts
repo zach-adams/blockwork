@@ -306,7 +306,7 @@ export async function mediaEdits(wp: WordPress, bindings: Preparation['media_bin
     }
 
     assert(
-      v.is(v.string(), url) && ['http:', 'https:'].includes(new URL(url).protocol),
+      typeof url === 'string' && ['http:', 'https:'].includes(new URL(url).protocol),
       'media_size_unavailable',
     );
     const destinations = Object.values(binding.bind);
@@ -577,7 +577,7 @@ async function validateReceipt(receipt: ResourceReceipt) {
 
 async function verifyUpload(record: JsonObject, upload: NonNullable<ResourceReceipt['upload']>) {
   try {
-    assert(v.is(v.string(), record.source_url), 'upload_source_unavailable');
+    assert(typeof record.source_url === 'string', 'upload_source_unavailable');
     const source = new URL(record.source_url);
     assert(
       source.origin === location.origin && !source.username && !source.password,
@@ -590,7 +590,7 @@ async function verifyUpload(record: JsonObject, upload: NonNullable<ResourceRece
 
     if (original !== undefined) {
       assert(
-        v.is(v.string(), original) &&
+        typeof original === 'string' &&
           original.length > 0 &&
           !['.', '..'].includes(original) &&
           Array.from(original).every(
@@ -686,7 +686,7 @@ async function verify(
   let selected = resource_id ?? receipt.id;
 
   if (!selected || (receipt.action === 'create' && !acknowledged)) {
-    assert(v.is(v.string(), receipt.desired.slug), 'creation_slug_required');
+    assert(typeof receipt.desired.slug === 'string', 'creation_slug_required');
 
     const found = await api(
       wp,
@@ -755,8 +755,8 @@ async function verify(
   const slugMadeUnique =
     receipt.kind === 'media' &&
     receipt.action === 'create' &&
-    v.is(v.string(), desiredSlug) &&
-    v.is(v.string(), storedSlug) &&
+    typeof desiredSlug === 'string' &&
+    typeof storedSlug === 'string' &&
     storedSlug.startsWith(`${desiredSlug}-`) &&
     /^\d+$/.test(storedSlug.slice(desiredSlug.length + 1));
 
@@ -776,7 +776,7 @@ async function verify(
         return true;
       }
 
-      if (!v.is(v.string(), value)) {
+      if (typeof value !== 'string') {
         return true;
       }
 
@@ -993,7 +993,7 @@ export async function resourceOperation(request: ResourceRequest) {
     if (input.operation === 'download_media') {
       const { record } = await readMedia(wp, input.id);
       assert(
-        v.is(v.string(), record.source_url) && URL.canParse(record.source_url),
+        typeof record.source_url === 'string' && URL.canParse(record.source_url),
         'media_download_source_unavailable',
       );
       const source = new URL(record.source_url);

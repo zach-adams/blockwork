@@ -66,12 +66,12 @@ function object(value: JsonValue | undefined): JsonObject {
 }
 
 function text(value: JsonValue | undefined): string | undefined {
-  return v.is(v.string(), value) ? value : undefined;
+  return typeof value === 'string' ? value : undefined;
 }
 
 // The same word removal as core's removeNewTabRel, double space included.
 function withoutNoopener(rel: JsonValue | undefined): JsonValue | undefined {
-  if (!v.is(v.string(), rel) || !rel) {
+  if (typeof rel !== 'string' || !rel) {
     return undefined;
   }
 
@@ -743,7 +743,7 @@ function missingWrite(wp: WordPress, row: BlockSummary, write: Write): NoteEdit 
       value !== undefined &&
       key in registered &&
       !same(current, value) &&
-      !(v.is(v.boolean(), value) && Boolean(current) === value)
+      !(typeof value === 'boolean' && Boolean(current) === value)
     );
   });
   const unset = (write.unset ?? []).map(pathOf).filter((path) => {
@@ -767,7 +767,7 @@ function siteDetails(wp: WordPress): Site {
   for (const item of Array.isArray(settings.colors) ? settings.colors : []) {
     const { slug, color } = object(item);
 
-    if (v.is(v.string(), slug) && v.is(v.string(), color)) {
+    if (typeof slug === 'string' && typeof color === 'string') {
       colors.set(slug, color);
     }
   }

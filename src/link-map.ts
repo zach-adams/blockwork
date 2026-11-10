@@ -90,7 +90,7 @@ export async function mapLinks(
   };
 
   mapBlockAttributes(markupBlocks(wp, input.markup, 'read'), (item, key) => {
-    if (v.is(v.string(), item)) {
+    if (typeof item === 'string') {
       if (key === 'url' || key === 'href') {
         collect(item);
       }

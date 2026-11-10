@@ -138,15 +138,15 @@ export function normalizePatternSpacers(
             Array.isArray(value) ? value.filter((item) => v.is(JsonObjectSchema, item)) : [],
           );
         const height = attributes.height;
-        const preset = v.is(v.string(), height) && height.match(/^var:preset\|spacing\|([^|]+)$/);
+        const preset = typeof height === 'string' && height.match(/^var:preset\|spacing\|([^|]+)$/);
         const resolved =
-          v.is(v.string(), height) &&
+          typeof height === 'string' &&
           wp.blockEditor?.getCustomValueFromPreset &&
           (!preset || !['0', 'default'].includes(preset[1]))
             ? wp.blockEditor.getCustomValueFromPreset(height, sizes)
             : undefined;
         const pixels =
-          v.is(v.string(), resolved) &&
+          typeof resolved === 'string' &&
           /^(?:\d+|\d*\.\d+)px$/.test(resolved) &&
           Number.isFinite(Number(resolved.slice(0, -2)));
         assert(
@@ -162,7 +162,7 @@ export function normalizePatternSpacers(
               'Use an explicit nonnegative pixel height or a spacing preset that resolves to one.',
           },
         );
-        assert(v.is(v.string(), height) && v.is(v.string(), resolved), 'unsupported_pattern');
+        assert(typeof height === 'string' && typeof resolved === 'string', 'unsupported_pattern');
         attributes.height = '0px';
         attributes.style = {
           ...style,
@@ -263,7 +263,7 @@ export interface StyleCatalog extends JsonObject {
 function presetItems(value: JsonValue | undefined): JsonObject[] {
   if (Array.isArray(value)) {
     return value.flatMap((item) => {
-      if (!v.is(JsonObjectSchema, item) || !v.is(v.string(), item.slug)) {
+      if (!v.is(JsonObjectSchema, item) || typeof item.slug !== 'string') {
         return [];
       }
 
@@ -363,9 +363,8 @@ export function viewportBreakpoints(
 
   for (const name of ['mobile', 'tablet'] as const) {
     const value = configured[name];
-    const match = v.is(v.string(), value)
-      ? value.trim().match(/^(\d+|\d*\.\d+)(px|em|rem)$/)
-      : null;
+    const match =
+      typeof value === 'string' ? value.trim().match(/^(\d+|\d*\.\d+)(px|em|rem)$/) : null;
 
     if (match) {
       breakpoints[name] = {
@@ -393,7 +392,7 @@ export function viewportBreakpoints(
 // Missing configuration uses native defaults only when the loaded editor
 // exposes its responsive control.
 function responsive(wp: WordPress, settings: JsonObject): JsonObject {
-  const available = v.is(v.function(), wp.blockEditor?.__experimentalResponsiveBlockControl);
+  const available = typeof wp.blockEditor?.__experimentalResponsiveBlockControl === 'function';
   const configured = object(settings.viewport);
   const ranges: JsonObject = {};
 
@@ -706,7 +705,7 @@ function context(wp: WordPress, name: string): StyleContext {
       supported:
         supports.customCSS !== false &&
         Boolean(registration.attributes?.style) &&
-        v.is(v.boolean(), editor.canEditCSS),
+        typeof editor.canEditCSS === 'boolean',
     },
   };
 }
@@ -722,9 +721,10 @@ function responsiveRules(wp: WordPress, settings: JsonObject, editor: JsonObject
 function cssPolicy(editor: JsonObject): JsonObject {
   return {
     property: ['style', 'css'],
-    evidence: v.is(v.boolean(), editor.canEditCSS)
-      ? 'native_css_permission_setting'
-      : 'unknown_native_custom_css_support',
+    evidence:
+      typeof editor.canEditCSS === 'boolean'
+        ? 'native_css_permission_setting'
+        : 'unknown_native_custom_css_support',
     can_edit_css: editor.canEditCSS === true,
     permission_evidence: 'native-editor-settings.canEditCSS',
     format:
@@ -878,7 +878,7 @@ function mutate(
 function presetValues(value: JsonValue | undefined, key = 'slug'): string[] {
   if (Array.isArray(value)) {
     return value.flatMap((item) =>
-      v.is(v.string(), object(item)[key]) ? [String(object(item)[key])] : [],
+      typeof object(item)[key] === 'string' ? [String(object(item)[key])] : [],
     );
   }
 
@@ -1016,7 +1016,7 @@ export async function styleUpdate(
         source: v.optional(v.literal('file')),
         title: v.optional(v.string()),
       });
-      const scalar = v.is(v.string(), request.value) || v.is(v.number(), request.value);
+      const scalar = typeof request.value === 'string' || v.is(v.number(), request.value);
       let accepted = scalar;
 
       if (control?.value_type === 'background_image') {
@@ -1024,7 +1024,8 @@ export async function styleUpdate(
       } else if (control?.value_type === 'duotone') {
         accepted =
           request.value === 'unset' ||
-          (v.is(v.string(), request.value) && /^var:preset\|duotone\|[^|]+$/.test(request.value)) ||
+          (typeof request.value === 'string' &&
+            /^var:preset\|duotone\|[^|]+$/.test(request.value)) ||
           v.is(v.pipe(v.array(v.string()), v.length(2)), request.value);
       }
 
@@ -1041,9 +1042,10 @@ export async function styleUpdate(
         check(false, 'style_side_required', { allowed_edges: control.edges });
       }
 
-      const match = v.is(v.string(), request.value)
-        ? request.value.match(/^var:preset\|([^|]+)\|([^|]+)$/)
-        : null;
+      const match =
+        typeof request.value === 'string'
+          ? request.value.match(/^var:preset\|([^|]+)\|([^|]+)$/)
+          : null;
 
       if (flatPreset || match) {
         check(
@@ -1076,7 +1078,7 @@ export async function styleUpdate(
 
       if (css) {
         check(
-          v.is(v.string(), request.value) && !/<\/?\w+/.test(request.value),
+          typeof request.value === 'string' && !/<\/?\w+/.test(request.value),
           'invalid_custom_css',
         );
       }
@@ -1108,7 +1110,7 @@ export async function styleUpdate(
       normalized.length === 4 &&
       normalized[3] === 'color' &&
       property.length === normalized.length &&
-      v.is(v.string(), result.borderColor)
+      typeof result.borderColor === 'string'
     ) {
       check(
         !requests.some((other) => other.property[0] === 'borderColor'),
