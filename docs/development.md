@@ -260,7 +260,9 @@ a link to the real `auth.json`, because a copy's refresh token could log the rea
 app out. It also links the app's document runtime cache, so each start doesn't
 download about 2 GB, and the login keychain, because a local site's certificate
 authority may be trusted only there. It shows a second app icon in the Dock while
-it runs.
+it runs. The app also registers each copy as a computer for the account's agent, so
+every start reuses one ID from `~/.config/blockwork/test-executor-id` on that Mac,
+and the copies there share one entry in the agent's Devices list.
 
 To place the copy's window on one Mac, write its position and size to
 `~/.config/blockwork/test-window.json` on that Mac, such as

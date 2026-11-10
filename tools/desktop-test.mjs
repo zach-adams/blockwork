@@ -1,8 +1,10 @@
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import {
   appendFile,
+  copyFile,
   mkdir,
   readdir,
   readFile,
@@ -12,7 +14,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -57,6 +59,9 @@ const recordingStyle = `
   [class*="cadencedShimmer-"] { color: var(--color-text-tertiary) !important; }
 `;
 const windowFile = join(homedir(), '.config/blockwork/test-window.json');
+// The app registers each user data folder as a computer for the account's agent, so
+// a new ID on every start would add a new entry to the agent's Devices list each time.
+const executorIdFile = join(homedir(), '.config/blockwork/test-executor-id');
 const exec = promisify(execFile);
 
 function execute(file, args, options = {}) {
@@ -236,6 +241,13 @@ async function start(args) {
 async function writeProfile(model, effort, allowedSite, size) {
   await mkdir(join(home, 'browser'), { recursive: true, mode: 0o700 });
   await mkdir(profile, { recursive: true, mode: 0o700 });
+
+  if (!existsSync(executorIdFile)) {
+    await mkdir(dirname(executorIdFile), { recursive: true });
+    await writeFile(executorIdFile, `${randomUUID()}\n`, { mode: 0o600 });
+  }
+
+  await copyFile(executorIdFile, join(profile, '.codex-tpp-local-executor-installation-id'));
 
   // A link and not a copy, because a copy's refresh token would invalidate the
   // user's when either side renewed it.
