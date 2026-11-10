@@ -67,7 +67,11 @@ jobs:
           path: ~/.wordpress-playground
           key: playground-editing-${{ hashFiles('tools/playground.mjs', 'tests/fixtures/**', 'tests/editing/**') }}
           restore-keys: playground-editing-
+      # One file per step: the runner runs two files at once, and two Playground
+      # sites on one runner made the first request time out.
       - run: >-
           BLOCKWORK_TEST_HERE=1 pnpm test:editing tests/editing/common-edits.test.mjs
-          tests/editing/save-and-recovery.test.mjs
-          --test-name-pattern='^(change the heading and button together|a guessed edit field is refused with a useful correction|other writers after save preparation refuse before any save request)$'
+          --test-name-pattern='^(change the heading and button together|a guessed edit field is refused with a useful correction)$'
+      - run: >-
+          BLOCKWORK_TEST_HERE=1 pnpm test:editing tests/editing/save-and-recovery.test.mjs
+          --test-name-pattern='^other writers after save preparation refuse before any save request$'
