@@ -32,8 +32,7 @@ import { canonical, same } from './values';
 import { requireContexts } from './canvas';
 import { renderAffected, withinInitialization } from './initialization';
 import { safeValue, schemaAllows } from './schema';
-import { editorUrl, readReference, referenceGraph } from './shared';
-import type { ReferenceSchema } from './contracts';
+import { checkReferenceGraph, editorUrl, readReference } from './shared';
 import type { Target } from './contracts';
 import { documentBlocks, documentRoot, resetDocument } from './document-view';
 import {
@@ -85,10 +84,6 @@ export interface Plan {
   steps: Step[];
   blocks: Block[];
   target: Target;
-  references: Record<
-    string,
-    { identity: JsonObject; graph: Array<v.InferOutput<typeof ReferenceSchema>> }
-  >;
   touched: Touch[];
 }
 
@@ -2299,7 +2294,6 @@ export async function preparePlan(
   const steps: Step[] = [];
   const liveIds = new Set(originalRows.map((row) => row.clientId));
   const changes = new Map<string, JsonObject>();
-  const references: Plan['references'] = {};
   const touched: Touch[] = [];
   const spacers: NonNullable<Plan['spacers']> = [];
   let blocks = copyTree(original);
@@ -2366,7 +2360,7 @@ export async function preparePlan(
       if (edit.op === 'insert_reference' || edit.op === 'update_reference') {
         const resolved = await readReference(wp, target, edit.reference);
         assert(!same(resolved.target, target), 'recursive_entity_reference');
-        const graph = await referenceGraph(wp, target, edit.reference);
+        await checkReferenceGraph(wp, target, edit.reference);
 
         if (edit.op === 'insert_reference') {
           inserted = [wp.blocks.createBlock(resolved.name, resolved.attributes)];
@@ -2377,10 +2371,6 @@ export async function preparePlan(
           );
           update = resolved.attributes;
         }
-
-        const owner = edit.op === 'insert_reference' ? inserted[0] : existing;
-        assert(owner, 'block_mismatch');
-        references[owner.clientId] = { identity: resolved.attributes, graph };
       }
 
       if (edit.op === 'update') {
@@ -2465,7 +2455,7 @@ export async function preparePlan(
     Boolean(status.unsupported.length),
   );
 
-  const plan = { steps, blocks, target, references, touched, spacers };
+  const plan = { steps, blocks, target, touched, spacers };
   checkPatternSpacers(wp, plan, blocks, true);
 
   return plan;

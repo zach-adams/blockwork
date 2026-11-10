@@ -764,12 +764,10 @@ export interface Session {
     settings: SettingsPlan;
     requested_before: JsonObject;
     references_before: SettingsPlan['references'];
-    shared_references_before: Plan['references'];
     media_references_before: MediaReference[];
   };
   // References from settings edits, checked again before saving.
   references: SettingsPlan['references'];
-  shared_references: Plan['references'];
   media_references: MediaReference[];
   // Set once the draft changed outside Blockwork while this session held it.
   foreign_change?: boolean;

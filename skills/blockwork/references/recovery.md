@@ -327,22 +327,12 @@ means something on the site rewrites content, so report that and stop.
 
 ### Stale shared references
 
-`stale_entity_reference` during save preparation returns
-`next: "inspect_entity_then_reconcile"`. Its bounded diagnostics identify
-`stage: "reference_currentness"`, `entity_type`, `entity_id`,
-`owner_client_id`, and `live_block_path`. `dependency: false` identifies the
-root entity; `true` identifies a dependency of that root. No content or tokens
-appear in these diagnostics.
-
-Call `inspect_entity` for the reported entity, then `read` the owning reference
-block at its current location. Inspection does not refresh the pinned tokens.
-An `update_reference` to the same entity currently returns `no_change`, so it
-does not refresh them either; an unrelated edit does not reconcile them.
-Use a safeguarded `revert` when its checkpoint removes the reference change,
-an authorized replacement with another inspected reference, or authorized
-removal and reinsertion as separate edits. If none matches the user's intent,
-preserve the draft and report the blocker. Keep any uncertain-save recovery
-ahead of repair, and retain the whole-pending-document and meta safeguards.
+`stale_entity_reference` means the referenced entity, or one it references,
+changed or is no longer published since you inspected it, so the
+`insert_reference` or `update_reference` edit applied nothing. It returns
+`next: "inspect_entity_then_reconcile"`. Inspect the entity again and retry the
+edit with the fresh `reference_token`. If it is no longer published, ask the
+user which entity to use.
 
 ### Paired footnote edits
 

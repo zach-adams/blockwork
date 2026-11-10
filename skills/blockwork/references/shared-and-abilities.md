@@ -68,18 +68,10 @@ markup, patterns, and tree insertion cannot supply shared identity attributes to
 bypass this; other attributes on existing reference blocks follow the normal
 checks.
 
-Each live reference root inserted or replaced by Blockwork owns the original
-tokens for its entity and dependencies until persistence is acknowledged.
-Removing that root or an ancestor retires its checks; replacing it retires the
-old graph and pins the replacement graph. Another root that shares a dependency
-keeps its own check. Moving a root keeps its tokens, and reverting restores the
-ownership from the reverted checkpoint. Reconnecting an unsaved draft keeps
-these checks. Only acknowledged persistence, or reconnect after an attempted
-save whose receipt matches the saved document, clears them.
-
-Save preparation rechecks those tokens. On `stale_entity_reference`, follow
-[reference repair](recovery.md#stale-shared-references). Inspecting the entity
-does not refresh a live root's pinned tokens.
+Blockwork checks the token only when it inserts or updates the reference. The
+page stores just the reference, so a later change to the entity doesn't block
+the page's save. On `stale_entity_reference`, follow
+[reference repair](recovery.md#stale-shared-references).
 
 ## Run site abilities
 
