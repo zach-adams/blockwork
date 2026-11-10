@@ -114,7 +114,7 @@ export async function callBlockwork(
     }
   }
 
-  if (options && !v.is(v.function(), options.write_receipt)) {
+  if (options && typeof options.write_receipt !== 'function') {
     return receiptFailure(request);
   }
 

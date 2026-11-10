@@ -411,7 +411,7 @@ function editorContext(wp: WordPress, session: Session) {
     // core/editor exposes raw text as strings; REST exposes { raw }. Convert
     // that native boundary before comparing the saved and live baselines.
     for (const name of ['title', 'excerpt', 'content']) {
-      if (v.is(v.string(), record[name])) {
+      if (typeof record[name] === 'string') {
         record[name] = { raw: record[name] };
       }
     }
@@ -522,7 +522,7 @@ function editorContext(wp: WordPress, session: Session) {
       assert(value !== undefined, 'unsupported_pending_settings');
 
       if (['title', 'excerpt'].includes(name)) {
-        assert(v.is(v.string(), value), 'unsupported_pending_settings');
+        assert(typeof value === 'string', 'unsupported_pending_settings');
         current[name] = { raw: value };
       } else {
         current[name] = value;
@@ -1187,7 +1187,7 @@ async function readSource(
 
 // WordPress's permalink. A draft's link opens for signed-in editors.
 function permalink(post: Post): string | undefined {
-  return v.is(v.string(), post.link) ? post.link : undefined;
+  return typeof post.link === 'string' ? post.link : undefined;
 }
 
 const RevisionLinksSchema = v.object({
@@ -1222,7 +1222,7 @@ async function read(context: Context, input: ReadInput): Promise<JsonObject> {
   const ids = new Set<string>();
 
   for (const block of v.is(v.array(JsonObjectSchema), projection.blocks) ? projection.blocks : []) {
-    if (v.is(v.string(), block.client_id)) {
+    if (typeof block.client_id === 'string') {
       ids.add(block.client_id);
     }
   }
@@ -1239,7 +1239,7 @@ async function read(context: Context, input: ReadInput): Promise<JsonObject> {
 
   // A depth read without client_id starts at the root, like roots.
   if (
-    v.is(v.string(), input.blocks) ||
+    typeof input.blocks === 'string' ||
     !('client_id' in input.blocks || 'search' in input.blocks || 'name' in input.blocks)
   ) {
     ids.add('');
@@ -1383,7 +1383,7 @@ function draftState(context: Context): DraftState {
   const pendingKeys = entries.map(([key]) => key).sort();
   const pending = Object.fromEntries(
     entries.map(([key, value]) => {
-      const callable = v.is(v.function(), value);
+      const callable = typeof value === 'function';
       assert(!callable || key === 'content', 'unsupported_pending_settings');
 
       if (callable) {
@@ -1438,9 +1438,8 @@ function draftTransition(
 
     if (content !== undefined) {
       const entry = v.parse(JsonObjectSchema, content);
-      const value = v.is(v.string(), entry.value)
-        ? entry.value
-        : v.parse(JsonObjectSchema, entry.value).raw;
+      const value =
+        typeof entry.value === 'string' ? entry.value : v.parse(JsonObjectSchema, entry.value).raw;
 
       if (
         !same(value, fields.content) ||
@@ -1815,7 +1814,7 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
 
   if (explicitFootnoteInput) {
     const declared = input.settings?.meta?.footnotes;
-    assert(v.is(v.string(), declared), 'unsupported_field_value', {
+    assert(typeof declared === 'string', 'unsupported_field_value', {
       field: 'settings.meta.footnotes',
     });
     validateExplicitFootnotes(wp, plan, declared);
@@ -1848,9 +1847,9 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
 
   if (structuralFootnoteInput) {
     const meta = v.parse(JsonObjectSchema, liveFields.meta);
-    assert(meta.footnotes === undefined || v.is(v.string(), meta.footnotes), 'meta_unavailable');
+    assert(meta.footnotes === undefined || typeof meta.footnotes === 'string', 'meta_unavailable');
     const declared = input.settings?.meta?.footnotes;
-    assert(declared === undefined || v.is(v.string(), declared), 'unsupported_field_value', {
+    assert(declared === undefined || typeof declared === 'string', 'unsupported_field_value', {
       field: 'settings.meta.footnotes',
       next_step: 'Supply the complete final Footnote body list as a JSON string.',
     });
@@ -2640,7 +2639,7 @@ async function saveWithMetaBoxes(savePost: () => Promise<void>): Promise<MetaBox
 
   const saveFetch = function (this: Window, ...args: Parameters<typeof fetch>) {
     const [input, options] = args;
-    const target = v.is(v.string(), input) || input instanceof URL ? input : undefined;
+    const target = typeof input === 'string' || input instanceof URL ? input : undefined;
     let matches = false;
 
     if (saving && target && options?.method?.toUpperCase() === 'POST' && window._wpMetaBoxUrl) {
@@ -3139,9 +3138,8 @@ function failure(cause: unknown, session?: Session): JsonObject {
     diagnostics,
     issues: v.isValiError(cause) ? validationIssues(cause.issues, 'native_response') : undefined,
     validation_source: v.isValiError(cause) ? 'native_response' : undefined,
-    editor_result: v.is(v.string(), diagnostics?.editor_result)
-      ? diagnostics.editor_result
-      : 'not_applied',
+    editor_result:
+      typeof diagnostics?.editor_result === 'string' ? diagnostics.editor_result : 'not_applied',
     persistence: session?.persistence ?? 'not_attempted',
     receipt: session?.save?.attempted ? session.save.receipt : undefined,
     last_request: session?.last_request,
