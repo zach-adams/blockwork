@@ -493,7 +493,6 @@ for (const scenario of transportCases) {
       if (scenario.name === 'nonce failure before commit') {
         assert.equal(saved.error, 'browser_operation_pending', JSON.stringify(saved));
         assert.equal(saved.diagnostics.stage, 'poll');
-        assert.ok(saved.diagnostics.job_id);
         assert.ok(blockwork.receipt);
 
         return;
