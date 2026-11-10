@@ -2550,7 +2550,6 @@ test('save refuses a stored change after preparation without calling savePost', 
   for (const [field, change] of [
     ['content', f => { f.post.content.raw = 'Other writer'; }],
     ['meta', f => { f.post.meta = { other: 'Other writer' }; }],
-    ['modified', f => { f.post.modified = '2026-11-09T12:00:01'; }],
   ]) {
     const f = fixture();
     await f.edit();
@@ -2564,11 +2563,7 @@ test('save refuses a stored change after preparation without calling savePost', 
     const result = await f.call('save', { receipt: prepared.receipt });
     assert.equal(result.error, 'saved_record_changed', JSON.stringify(result));
     assert.equal(result.persistence, 'not_attempted');
-    assert.equal(result.diagnostics.stage, 'before_save');
-    assert.equal(result.diagnostics.post_id, 7);
-    assert.equal(result.diagnostics.saved_token_changed, true);
-
-    if (field !== 'modified') assert.ok(result.diagnostics.fields.some(name => name.startsWith(field)));
+    assert.ok(result.diagnostics.fields.some(name => name.startsWith(field)));
     assert.match(result.hint, /overwrite saved changes/);
     assert.match(result.hint, /fresh editor/);
     assert.ok(result.next);
@@ -2578,6 +2573,18 @@ test('save refuses a stored change after preparation without calling savePost', 
     assert.equal(status.last_request.outcome, 'failed');
     assert.equal(f.window.__blockwork_editor.save.attempted, false);
   }
+});
+
+test('save accepts a native autosave from the same editor after preparation', async () => {
+  const f = fixture();
+  assert.equal((await f.call('connect', { workflow: 'attached' })).ok, true);
+  assert.equal((await f.call('edit', { edits: [{ op: 'update', client_id: 'a', attributes: { content: 'After' } }] })).ok, true);
+  const prepared = await f.call('prepare_save', { save_all_pending: true });
+  assert.equal(prepared.ok, true, JSON.stringify(prepared));
+  f.autosave();
+
+  const saved = await f.call('save', { receipt: prepared.receipt, save_all_pending: true });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
 });
 
 test('save rechecks the draft and native lock after the stored-record read', async () => {

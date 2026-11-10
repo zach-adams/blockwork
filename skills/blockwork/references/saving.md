@@ -9,11 +9,10 @@ const saved = await blockwork.save(); // background
 
 `save` makes two page calls. The first checks the editor, the signed-in user,
 and the saved record, refuses an unrequested publication change, and returns a
-receipt that the caller stores. The second rereads the saved record and compares
-its fields and modification markers with preparation, then confirms the draft
-has not changed, calls Gutenberg's `savePost` once, and compares a fresh REST read
-and native parse with the receipt. A verified result has `persistence: "verified"`,
-`status`, `link`, `editor_url`, `revisions`, and `valid`. `editor_url` opens the
+receipt that the caller stores. The second rereads the saved record to confirm no
+other writer changed it, confirms the draft has not changed, calls Gutenberg's
+`savePost` once, and compares a fresh REST read and native parse with the receipt.
+A verified result has `persistence: "verified"`, `status`, `link`, `editor_url`, `revisions`, and `valid`. `editor_url` opens the
 document in the post editor, or the Site Editor for templates, template parts,
 and navigation. `revisions` is `{latest_id, url}` for the latest revision
 WordPress reports after the save, or `null` when the saved record links none,
@@ -92,14 +91,13 @@ saved-record, and schema reads. Read, currentness, reference, and duplicate
 checks retain error precedence over the lock result. Every check must pass
 before Gutenberg saves.
 
-A saved-record change between preparation and saving refuses before `savePost`
-with `saved_record_changed`. `diagnostics.stage` is `before_save`, `post_id` and
-`post_type` identify the document, and `saved_token_changed: true` reports that
-the saved fields or modification markers changed. `fields` lists changed field
-names without values; it can be empty when only a modification marker changed.
-No save was attempted. Tell the user before replacing an owned background tab
-with a fresh editor, inspect the current document, reconcile the intended edits,
-and prepare again. Only the user can decide whether to reload an attached editor
+`save` rereads the saved record before `savePost`, so another writer's save
+between preparation and saving refuses with `saved_record_changed`.
+`diagnostics.fields` lists the changed field names without values. This editor's
+own saves in that gap, such as a draft autosave, don't count. No save was
+attempted. Tell the user before replacing an owned background tab with a fresh
+editor, inspect the current document, reconcile the intended edits, and prepare
+again. Only the user can decide whether to reload an attached editor
 and discard pending work. This check cannot prevent a writer from changing the
 server after the final read and before WordPress accepts the save.
 

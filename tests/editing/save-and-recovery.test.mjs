@@ -87,7 +87,6 @@ test('other writers after save preparation refuse before any save request', asyn
       const refused = await blockwork.call({ operation: 'save', target, receipt: prepared.receipt });
       await assertRefused(site, id, external, refused, { error: 'saved_record_changed' });
       assert.equal(refused.persistence, 'not_attempted');
-      assert.equal(refused.diagnostics.stage, 'before_save');
       assert.ok(refused.diagnostics.fields.includes('content'));
       assert.match(refused.hint, /overwrite saved changes/);
       assert.equal(writes, 0);
