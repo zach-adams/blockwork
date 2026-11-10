@@ -10,7 +10,7 @@ import type {
   JsonValue,
   RequestedEdit,
 } from './contracts';
-import type { Attribute, Block, WordPress } from './wordpress';
+import type { Attribute, Block, BlockActions, BlockEditor, WordPress } from './wordpress';
 import {
   blockState,
   postDateField,
@@ -1698,25 +1698,13 @@ export async function authorizeFootnotePlan(
   };
 }
 
-export async function preparePlan(
+function checkInitialSerialization(
   wp: WordPress,
-  requests: RequestedEdit[],
+  original: Block[],
+  originalRows: BlockSummary[],
   content: string,
   target: Target,
-): Promise<Plan> {
-  const original = copyTree(documentBlocks(wp));
-  const originalRows = readTree(wp, original);
-
-  checkCSSPermission(wp, original);
-
-  const originalState = canonical(blockState(originalRows));
-  const status = validity(originalRows);
-  assert(status.invalid.length === 0, 'unsupported_block');
-  assert(
-    !status.unsupported.length ||
-      requests.every((edit) => ['update', 'update_style'].includes(edit.op)),
-    'unsupported_structural_edit',
-  );
+) {
   const normalization = wp.blocks.serialize(original) !== content;
   // Gutenberg omits a single unmodified default block from document content.
   // Keep its live identity so the inspected placeholder can still be edited.
@@ -1757,6 +1745,557 @@ export async function preparePlan(
       editor_url: editorUrl(target),
     });
   }
+}
+
+function recordEditDependencies(
+  blocks: Block[],
+  request: RequestedEdit,
+  edit: Edit,
+  liveIds: Set<string>,
+  touched: Touch[],
+  editIndex: number,
+) {
+  if ('path' in edit && liveIds.has(at(blocks, edit.path).clientId)) {
+    touched.push({
+      client_id: at(blocks, edit.path).clientId,
+      kind: ['update', 'update_style', 'set_block_style', 'update_reference'].includes(edit.op)
+        ? 'attributes'
+        : 'subtree',
+      edit_index: editIndex,
+    });
+  }
+
+  if ('parent' in edit && edit.index !== undefined) {
+    const parentId = edit.parent.length ? at(blocks, edit.parent).clientId : '';
+
+    if (!parentId || liveIds.has(parentId)) {
+      touched.push({ client_id: parentId, kind: 'children', edit_index: editIndex });
+    }
+  }
+
+  // A path names the intended block only while every ancestor keeps the
+  // children the agent last read. Client ID selectors need no such check.
+  // A move can address its source and its destination by path.
+  const selectedPaths = [
+    'path' in request && request.path !== undefined && 'path' in edit ? edit.path : undefined,
+    'parent' in request && request.parent?.length && 'parent' in edit ? edit.parent : undefined,
+  ];
+
+  for (const selected of selectedPaths) {
+    if (!selected) {
+      continue;
+    }
+
+    touched.push({ client_id: '', kind: 'children', edit_index: editIndex });
+
+    for (const ancestor of ancestry(blocks, selected.slice(0, -1))) {
+      if (liveIds.has(ancestor.clientId)) {
+        touched.push({ client_id: ancestor.clientId, kind: 'children', edit_index: editIndex });
+      }
+    }
+  }
+}
+
+async function preparePatternInsertion(
+  wp: WordPress,
+  target: Target,
+  edit: Extract<Edit, { op: 'insert_pattern' }>,
+  blocks: Block[],
+  requestCount: number,
+  originalRows: BlockSummary[],
+  liveIds: Set<string>,
+  spacers: NonNullable<Plan['spacers']>,
+  touched: Touch[],
+  editIndex: number,
+) {
+  let inserted: Block[];
+  let comments: EmptyComments | undefined;
+  const item = (await patterns(wp)).find((pattern) => pattern.name === edit.pattern);
+
+  assert(item, 'stale_pattern');
+  const parsed = wp.blocks.parse(item.content);
+  assert(parsed.length > 0, 'unsupported_pattern');
+  const parsedRows = readTree(wp, parsed);
+  assert(validity(parsedRows).valid, 'unsupported_pattern');
+
+  const prepared = await prepareEmptyComments(
+    wp,
+    target,
+    edit.pattern,
+    parsedRows.some((row) => row.name === 'core/comments') &&
+      edit.parent.length === 0 &&
+      requestCount === 1,
+  );
+
+  if (prepared) {
+    comments = prepared.proof;
+    const clone = (block: Block): Block => {
+      const recreated = create(wp, parsedBlockInput(wp, block));
+      assert(
+        same(blockState(readTree(wp, [block])), blockState(readTree(wp, [recreated]))) &&
+          wp.blocks.serialize([block]) === wp.blocks.serialize([recreated]),
+        'unsupported_pattern',
+      );
+
+      return wp.blocks.cloneBlock(
+        block,
+        copyAttributes(block.attributes),
+        (block.innerBlocks ?? []).map(clone),
+      );
+    };
+
+    inserted = prepared.blocks.map(clone);
+    const insertedRows = readTree(wp, inserted);
+    const templates = insertedRows.filter((row) => row.name === 'core/comment-template');
+
+    for (const row of insertedRows) {
+      if (
+        templates.some(
+          (template) =>
+            row.path.length > template.path.length && containsPath(template.path, row.path),
+        )
+      ) {
+        comments.hidden.add(row.clientId);
+      }
+    }
+  } else {
+    const inputs = parsed.map((block) => parsedBlockInput(wp, block));
+    const parents = ancestry(blocks, edit.parent);
+    const converted = normalizePatternSpacers(
+      wp,
+      inputs,
+      parents,
+      wp.blockSerializationDefaultParser?.parse(item.content) ?? [],
+    );
+    inserted = inputs.map((input) => create(wp, input, 0, { value: 0 }, true));
+
+    for (const conversion of converted) {
+      const dependencies = [...parents, ...ancestry(inserted, conversion.path.slice(0, -1))];
+      spacers.push({
+        ...conversion,
+        clientId: at(inserted, conversion.path).clientId,
+        ancestors: copyTree(dependencies),
+      });
+
+      for (const ancestor of dependencies) {
+        if (liveIds.has(ancestor.clientId)) {
+          const original = originalRows.find((row) => row.clientId === ancestor.clientId);
+          assert(same(original?.attributes, ancestor.attributes), 'prepared_content_changed', {
+            constraint: 'pattern_spacer_ancestor',
+            next_step: 'Insert the pattern in a separate batch from changes to its containers.',
+          });
+          touched.push({ client_id: ancestor.clientId, kind: 'attributes', edit_index: editIndex });
+        }
+      }
+    }
+  }
+
+  return { inserted, comments };
+}
+
+async function prepareVariationInsertion(
+  wp: WordPress,
+  edit: Extract<Edit, { op: 'insert_variation' }>,
+) {
+  const item = (await variations(wp, edit.name)).find(
+    (variation) => variation.name === edit.variation,
+  );
+
+  assert(item, 'stale_variation');
+  attributes(wp, edit.name, edit.attributes);
+  create(
+    wp,
+    {
+      name: edit.name,
+      attributes: item.attributes,
+      inner_blocks: wp.blocks
+        .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
+        .map((block) => blockInput(wp, block)),
+    },
+    0,
+    { value: 0 },
+    true,
+  );
+  const values = { ...item.attributes, ...edit.attributes };
+
+  if (postDateField({ name: edit.name, attributes: item.attributes ?? {} })) {
+    assert(!Object.hasOwn(edit.attributes, 'datetime'), 'unsupported_attribute', {
+      block_name: edit.name,
+      attribute: 'datetime',
+      constraint: 'bound_datetime_read_only',
+    });
+
+    if (
+      v.is(JsonObjectSchema, item.attributes?.metadata) &&
+      v.is(JsonObjectSchema, edit.attributes.metadata)
+    ) {
+      values.metadata = { ...item.attributes.metadata, ...edit.attributes.metadata };
+    }
+  }
+
+  const inserted = [
+    create(
+      wp,
+      {
+        name: edit.name,
+        attributes: values,
+        inner_blocks: wp.blocks
+          .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
+          .map((block) => blockInput(wp, block)),
+      },
+      0,
+      { value: 0 },
+      true,
+    ),
+  ];
+
+  return inserted;
+}
+
+async function prepareBlockStyle(
+  wp: WordPress,
+  edit: Extract<Edit, { op: 'set_block_style' }>,
+  existing: Block | undefined,
+) {
+  const catalog = await styles(wp, edit.name);
+  assert(
+    edit.style === null || catalog.items.some((item) => item.name === edit.style),
+    'style_unavailable',
+  );
+  assert(
+    wp.blocks.getBlockType(edit.name)?.supports?.customClassName !== false,
+    'style_unavailable',
+  );
+  const old = existing?.attributes.className ?? '';
+  assert(typeof old === 'string', 'invalid_class_name');
+  const names = new Set(catalog.items.map((item) => `is-style-${item.name}`));
+  const classes = old.split(/\s+/).filter((item) => item && !names.has(item));
+
+  if (edit.style !== null) {
+    classes.push(`is-style-${edit.style}`);
+  }
+
+  const update = { className: [...new Set(classes)].join(' ') };
+  attributes(wp, edit.name, update);
+
+  return update;
+}
+
+function checkPlannedSerialization(
+  wp: WordPress,
+  blocks: Block[],
+  originalRows: BlockSummary[],
+  content: string,
+  changes: Map<string, JsonObject>,
+  unsupported: boolean,
+) {
+  const desired = wp.blocks.serialize(blocks);
+  const parsedBlocks = wp.blocks.parse(desired);
+  const parsedRows = readTree(wp, parsedBlocks);
+  assert(!validity(parsedRows).invalid.length, 'unsupported_block');
+  const plannedRows = readTree(wp, blocks);
+  const boundDate = parsedRows.find((row, index) => {
+    const metadata = row.attributes.metadata;
+
+    return (
+      row.name === 'core/post-date' &&
+      v.is(JsonObjectSchema, metadata) &&
+      Boolean(metadata.bindings) &&
+      !postDateField(row) &&
+      !same(metadata, plannedRows[index]?.attributes.metadata)
+    );
+  });
+
+  assert(!boundDate, 'bound_block_unsupported', {
+    target_path: boundDate?.path,
+    block_name: 'core/post-date',
+    attribute: 'metadata.bindings.datetime',
+    constraint: 'native_post_data_binding_unsupported',
+  });
+
+  // Mismatch diagnostics scan the whole document, so build them only on failure.
+  if (!roundTripMatches(wp, plannedRows, parsedRows)) {
+    throw new BlockworkError(
+      'serialization_mismatch',
+      serializationDiagnostics(plannedRows, parsedRows, 'prepare_round_trip', 'planned_to_parsed'),
+    );
+  }
+
+  if (unsupported) {
+    provePreservation(wp, originalRows, plannedRows, content, desired, changes);
+  }
+}
+
+async function preparePlanDateGuards(wp: WordPress, plan: Plan, originalIds: Set<string>) {
+  const dateGuards: Array<() => void> = [];
+
+  for (const [index, step] of plan.steps.entries()) {
+    checkPostDateTemplates(
+      wp,
+      step.after,
+      new Set(readTree(wp, stepTargets(step)).map((row) => row.clientId)),
+    );
+    const beforeRows = readTree(wp, step.before);
+    const afterRows = readTree(wp, step.after);
+    const previous = new Map(beforeRows.map((row) => [row.clientId, row]));
+    const parents = (rows: BlockSummary[], path: number[]) =>
+      rows.flatMap((row) =>
+        row.path.length < path.length && containsPath(row.path, path) ? [row.clientId] : [],
+      );
+    const changed = new Set(
+      afterRows.flatMap((row) => {
+        const prior = previous.get(row.clientId);
+        const providers = wp.blocks.getBlockType(row.name)?.providesContext ?? {};
+        const contextAttributes = [
+          'postId',
+          'postType',
+          'query',
+          'previewPostType',
+          'templateSlug',
+        ].flatMap((key) => (providers[key] ? [providers[key]] : []));
+
+        if (row.name === 'core/query') {
+          contextAttributes.push('query');
+        }
+
+        return !prior ||
+          !same(parents(beforeRows, prior.path), parents(afterRows, row.path)) ||
+          (row.name === 'core/post-template' &&
+            (prior.block.innerBlocks?.length ?? 0) > 0 &&
+            !row.block.innerBlocks?.length) ||
+          (postDateField(row) && !same(prior.attributes, row.attributes)) ||
+          contextAttributes.some((key) => !same(prior.attributes[key], row.attributes[key]))
+          ? [row.clientId]
+          : [];
+      }),
+    );
+
+    if (step.edit.op !== 'remove') {
+      dateGuards.push(await preparePostDates(wp, step.before, changed));
+    }
+
+    dateGuards.push(await preparePostDates(wp, step.after, changed));
+    await prepareQueryNormalization(
+      wp,
+      step.before,
+      step.after,
+      step.edit.op === 'move'
+        ? readTree(wp, stepTargets(step)).map((row) => row.block)
+        : stepTargets(step),
+      originalIds,
+      index,
+    );
+  }
+
+  return dateGuards;
+}
+
+function checkAppliedTree(
+  wp: WordPress,
+  plan: Plan,
+  expected: Block[],
+  initialize: boolean,
+  exactIds: Set<string>,
+) {
+  checkPatternSpacers(wp, plan, documentBlocks(wp));
+
+  if (initialize) {
+    checkInitialized(wp, expected, documentBlocks(wp), exactIds);
+  } else {
+    const currentBlocks = documentBlocks(wp);
+    const currentState = blockState(readTree(wp, currentBlocks));
+    const expectedState = blockState(readTree(wp, expected));
+    assert(same(currentState, expectedState), 'prepared_content_changed');
+    assert(
+      same(
+        readTree(wp, currentBlocks).map((row) => row.clientId),
+        readTree(wp, expected).map((row) => row.clientId),
+      ),
+      'prepared_content_changed',
+    );
+  }
+}
+
+async function dispatchPlanStep(
+  wp: WordPress,
+  actions: BlockActions,
+  step: Step,
+  live: Block[],
+  matches: (expected: Block[]) => void,
+  dispatch: () => void,
+) {
+  const edit = step.edit;
+
+  if (
+    edit.op === 'update_reference' ||
+    edit.op === 'update' ||
+    edit.op === 'update_style' ||
+    edit.op === 'set_block_style'
+  ) {
+    await actions.updateBlockAttributes(at(live, edit.path).clientId, copyAttributes(step.update!));
+  } else if (edit.op === 'move') {
+    const block = at(live, edit.path);
+    const destination = children(step.before, edit.parent);
+
+    const index =
+      edit.index ?? destination.length - (same(edit.parent, edit.path.slice(0, -1)) ? 1 : 0);
+
+    await actions.moveBlocksToPosition(
+      [block.clientId],
+      parent_id(wp, live, edit.path.slice(0, -1)),
+      parent_id(wp, live, edit.parent),
+      index,
+    );
+  } else if ('parent' in edit) {
+    await actions.insertBlocks(
+      copyTree(step.blocks),
+      edit.index ?? children(live, edit.parent).length,
+      parent_id(wp, live, edit.parent),
+      false,
+    );
+  } else if (edit.op === 'remove') {
+    if (step.after.length) {
+      await actions.removeBlocks([at(live, edit.path).clientId], false);
+    } else {
+      // removeBlocks recreates a default block when the document becomes empty.
+      // The removal policy passed above; reset keeps this planned empty state.
+      await resetDocument(wp, [], () => matches(step.before), dispatch);
+    }
+  } else if (edit.op === 'replace') {
+    await actions.replaceBlocks([at(live, edit.path).clientId], copyTree(step.blocks), null);
+  }
+}
+
+async function settleStepTargets(
+  wp: WordPress,
+  plan: Plan,
+  step: Step,
+  initialize: boolean,
+  originalIds: Set<string>,
+  affected: Set<string>,
+  hiddenComments: Set<string>,
+  exactIds: Set<string>,
+  budget: Budget,
+  retainMissingSelection: boolean,
+  dateGuards: Array<() => void>,
+) {
+  const targets = stepTargets(step);
+
+  if (initialize && targets.length) {
+    const hiddenQueryDescendants = new Set<string>();
+
+    if (['update', 'update_style', 'set_block_style'].includes(step.edit.op)) {
+      for (const target of targets) {
+        if (target.name !== 'core/query' || !originalIds.has(target.clientId)) {
+          continue;
+        }
+
+        for (const row of readTree(wp, target.innerBlocks ?? [])) {
+          if (originalIds.has(row.clientId)) {
+            hiddenQueryDescendants.add(row.clientId);
+            affected.delete(row.clientId);
+          }
+        }
+      }
+    }
+
+    const targetRows = readTree(wp, targets).filter(
+      (row) => !hiddenQueryDescendants.has(row.clientId) && !hiddenComments.has(row.clientId),
+    );
+
+    for (const row of targetRows) {
+      affected.add(row.clientId);
+    }
+
+    if (step === plan.steps.at(-1)) {
+      await settleInitialization(
+        wp,
+        step.after,
+        exactIds,
+        affected,
+        budget,
+        retainMissingSelection,
+        () => {
+          for (const check of dateGuards) {
+            check();
+          }
+        },
+      );
+    } else {
+      // Intermediate containers must mount and refresh insertion policies.
+      // Defer leaf initialization and the quiet interval to the final tree;
+      // later edits may replace these descendants entirely.
+      const containers = new Set(
+        targetRows.flatMap((row) => (row.block.innerBlocks?.length ? [row.clientId] : [])),
+      );
+      await renderAffected(wp, containers, budget, retainMissingSelection, () => {
+        for (const check of dateGuards) {
+          check();
+        }
+      });
+      checkInitialized(wp, step.after, documentBlocks(wp), exactIds);
+    }
+  }
+}
+
+function checkInsertedChildren(wp: WordPress, store: BlockEditor, step: Step) {
+  // New parents only acquire their contextual allowed-block lists after
+  // insertion. Like native paste, nested children are not checked against
+  // template locks; a locked template that disagrees resyncs natively and
+  // fails the initialization check instead.
+  for (const block of step.blocks) {
+    const checkChildren = (parent: Block): void => {
+      for (const child of parent.innerBlocks ?? []) {
+        if (step.comments?.hidden.has(child.clientId)) {
+          continue;
+        }
+
+        const settings = store.getBlockListSettings?.(parent.clientId);
+        assert(settings, 'native_insertion_context_unavailable');
+        const details = { block_name: child.name, parent_name: parent.name };
+        const allowed = settings.allowedBlocks;
+        const admitted = Array.isArray(allowed) && allowed.includes(child.name);
+        assert(!Array.isArray(allowed) || admitted, 'insertion_refused', {
+          ...details,
+          constraint: 'parent_allowed_blocks',
+        });
+        const parents = wp.blocks.getBlockType(child.name)?.parent;
+        assert(
+          !parents ||
+            admitted ||
+            parents.includes(parent.name) ||
+            wp.blocks.getBlockType(parent.name)?.allowedBlocks?.includes(child.name),
+          'insertion_refused',
+          { ...details, constraint: 'block_parent' },
+        );
+        checkChildren(child);
+      }
+    };
+
+    checkChildren(block);
+  }
+}
+
+export async function preparePlan(
+  wp: WordPress,
+  requests: RequestedEdit[],
+  content: string,
+  target: Target,
+): Promise<Plan> {
+  const original = copyTree(documentBlocks(wp));
+  const originalRows = readTree(wp, original);
+
+  checkCSSPermission(wp, original);
+
+  const originalState = canonical(blockState(originalRows));
+  const status = validity(originalRows);
+  assert(status.invalid.length === 0, 'unsupported_block');
+  assert(
+    !status.unsupported.length ||
+      requests.every((edit) => ['update', 'update_style'].includes(edit.op)),
+    'unsupported_structural_edit',
+  );
+  checkInitialSerialization(wp, original, originalRows, content, target);
 
   const steps: Step[] = [];
   const edits: Edit[] = [];
@@ -1787,45 +2326,7 @@ export async function preparePlan(
       livePath = liveRow?.path;
       edits.push(edit);
 
-      if ('path' in edit && liveIds.has(at(blocks, edit.path).clientId)) {
-        touched.push({
-          client_id: at(blocks, edit.path).clientId,
-          kind: ['update', 'update_style', 'set_block_style', 'update_reference'].includes(edit.op)
-            ? 'attributes'
-            : 'subtree',
-          edit_index: editIndex,
-        });
-      }
-
-      if ('parent' in edit && edit.index !== undefined) {
-        const parentId = edit.parent.length ? at(blocks, edit.parent).clientId : '';
-
-        if (!parentId || liveIds.has(parentId)) {
-          touched.push({ client_id: parentId, kind: 'children', edit_index: editIndex });
-        }
-      }
-
-      // A path names the intended block only while every ancestor keeps the
-      // children the agent last read. Client ID selectors need no such check.
-      // A move can address its source and its destination by path.
-      const selectedPaths = [
-        'path' in request && request.path !== undefined && 'path' in edit ? edit.path : undefined,
-        'parent' in request && request.parent?.length && 'parent' in edit ? edit.parent : undefined,
-      ];
-
-      for (const selected of selectedPaths) {
-        if (!selected) {
-          continue;
-        }
-
-        touched.push({ client_id: '', kind: 'children', edit_index: editIndex });
-
-        for (const ancestor of ancestry(blocks, selected.slice(0, -1))) {
-          if (liveIds.has(ancestor.clientId)) {
-            touched.push({ client_id: ancestor.clientId, kind: 'children', edit_index: editIndex });
-          }
-        }
-      }
+      recordEditDependencies(blocks, request, edit, liveIds, touched, editIndex);
 
       const before = copyTree(blocks);
       let comments: EmptyComments | undefined;
@@ -1847,148 +2348,22 @@ export async function preparePlan(
       }
 
       if (edit.op === 'insert_pattern') {
-        const item = (await patterns(wp)).find((pattern) => pattern.name === edit.pattern);
-
-        assert(item, 'stale_pattern');
-        const parsed = wp.blocks.parse(item.content);
-        assert(parsed.length > 0, 'unsupported_pattern');
-        const parsedRows = readTree(wp, parsed);
-        assert(validity(parsedRows).valid, 'unsupported_pattern');
-
-        const prepared = await prepareEmptyComments(
+        ({ inserted, comments } = await preparePatternInsertion(
           wp,
           target,
-          edit.pattern,
-          parsedRows.some((row) => row.name === 'core/comments') &&
-            edit.parent.length === 0 &&
-            requests.length === 1,
-        );
-
-        if (prepared) {
-          comments = prepared.proof;
-          const clone = (block: Block): Block => {
-            const recreated = create(wp, parsedBlockInput(wp, block));
-            assert(
-              same(blockState(readTree(wp, [block])), blockState(readTree(wp, [recreated]))) &&
-                wp.blocks.serialize([block]) === wp.blocks.serialize([recreated]),
-              'unsupported_pattern',
-            );
-
-            return wp.blocks.cloneBlock(
-              block,
-              copyAttributes(block.attributes),
-              (block.innerBlocks ?? []).map(clone),
-            );
-          };
-
-          inserted = prepared.blocks.map(clone);
-          const insertedRows = readTree(wp, inserted);
-          const templates = insertedRows.filter((row) => row.name === 'core/comment-template');
-
-          for (const row of insertedRows) {
-            if (
-              templates.some(
-                (template) =>
-                  row.path.length > template.path.length && containsPath(template.path, row.path),
-              )
-            ) {
-              comments.hidden.add(row.clientId);
-            }
-          }
-        } else {
-          const inputs = parsed.map((block) => parsedBlockInput(wp, block));
-          const parents = ancestry(blocks, edit.parent);
-          const converted = normalizePatternSpacers(
-            wp,
-            inputs,
-            parents,
-            wp.blockSerializationDefaultParser?.parse(item.content) ?? [],
-          );
-          inserted = inputs.map((input) => create(wp, input, 0, { value: 0 }, true));
-
-          for (const conversion of converted) {
-            const dependencies = [...parents, ...ancestry(inserted, conversion.path.slice(0, -1))];
-            spacers.push({
-              ...conversion,
-              clientId: at(inserted, conversion.path).clientId,
-              ancestors: copyTree(dependencies),
-            });
-
-            for (const ancestor of dependencies) {
-              if (liveIds.has(ancestor.clientId)) {
-                const original = originalRows.find((row) => row.clientId === ancestor.clientId);
-                assert(
-                  same(original?.attributes, ancestor.attributes),
-                  'prepared_content_changed',
-                  {
-                    constraint: 'pattern_spacer_ancestor',
-                    next_step:
-                      'Insert the pattern in a separate batch from changes to its containers.',
-                  },
-                );
-                touched.push({
-                  client_id: ancestor.clientId,
-                  kind: 'attributes',
-                  edit_index: editIndex,
-                });
-              }
-            }
-          }
-        }
+          edit,
+          blocks,
+          requests.length,
+          originalRows,
+          liveIds,
+          spacers,
+          touched,
+          editIndex,
+        ));
       }
 
       if (edit.op === 'insert_variation') {
-        const item = (await variations(wp, edit.name)).find(
-          (variation) => variation.name === edit.variation,
-        );
-
-        assert(item, 'stale_variation');
-        attributes(wp, edit.name, edit.attributes);
-        create(
-          wp,
-          {
-            name: edit.name,
-            attributes: item.attributes,
-            inner_blocks: wp.blocks
-              .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
-              .map((block) => blockInput(wp, block)),
-          },
-          0,
-          { value: 0 },
-          true,
-        );
-        const values = { ...item.attributes, ...edit.attributes };
-
-        if (postDateField({ name: edit.name, attributes: item.attributes ?? {} })) {
-          assert(!Object.hasOwn(edit.attributes, 'datetime'), 'unsupported_attribute', {
-            block_name: edit.name,
-            attribute: 'datetime',
-            constraint: 'bound_datetime_read_only',
-          });
-
-          if (
-            v.is(JsonObjectSchema, item.attributes?.metadata) &&
-            v.is(JsonObjectSchema, edit.attributes.metadata)
-          ) {
-            values.metadata = { ...item.attributes.metadata, ...edit.attributes.metadata };
-          }
-        }
-
-        inserted = [
-          create(
-            wp,
-            {
-              name: edit.name,
-              attributes: values,
-              inner_blocks: wp.blocks
-                .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
-                .map((block) => blockInput(wp, block)),
-            },
-            0,
-            { value: 0 },
-            true,
-          ),
-        ];
+        inserted = await prepareVariationInsertion(wp, edit);
       }
 
       if (edit.op === 'insert_reference' || edit.op === 'update_reference') {
@@ -2022,26 +2397,7 @@ export async function preparePlan(
       }
 
       if (edit.op === 'set_block_style') {
-        const catalog = await styles(wp, edit.name);
-        assert(
-          edit.style === null || catalog.items.some((item) => item.name === edit.style),
-          'style_unavailable',
-        );
-        assert(
-          wp.blocks.getBlockType(edit.name)?.supports?.customClassName !== false,
-          'style_unavailable',
-        );
-        const old = existing?.attributes.className ?? '';
-        assert(typeof old === 'string', 'invalid_class_name');
-        const names = new Set(catalog.items.map((item) => `is-style-${item.name}`));
-        const classes = old.split(/\s+/).filter((item) => item && !names.has(item));
-
-        if (edit.style !== null) {
-          classes.push(`is-style-${edit.style}`);
-        }
-
-        update = { className: [...new Set(classes)].join(' ') };
-        attributes(wp, edit.name, update);
+        update = await prepareBlockStyle(wp, edit, existing);
       }
 
       if (edit.op === 'move') {
@@ -2103,41 +2459,14 @@ export async function preparePlan(
     }
   }
 
-  const desired = wp.blocks.serialize(blocks);
-  const parsedBlocks = wp.blocks.parse(desired);
-  const parsedRows = readTree(wp, parsedBlocks);
-  assert(!validity(parsedRows).invalid.length, 'unsupported_block');
-  const plannedRows = readTree(wp, blocks);
-  const boundDate = parsedRows.find((row, index) => {
-    const metadata = row.attributes.metadata;
-
-    return (
-      row.name === 'core/post-date' &&
-      v.is(JsonObjectSchema, metadata) &&
-      Boolean(metadata.bindings) &&
-      !postDateField(row) &&
-      !same(metadata, plannedRows[index]?.attributes.metadata)
-    );
-  });
-
-  assert(!boundDate, 'bound_block_unsupported', {
-    target_path: boundDate?.path,
-    block_name: 'core/post-date',
-    attribute: 'metadata.bindings.datetime',
-    constraint: 'native_post_data_binding_unsupported',
-  });
-
-  // Mismatch diagnostics scan the whole document, so build them only on failure.
-  if (!roundTripMatches(wp, plannedRows, parsedRows)) {
-    throw new BlockworkError(
-      'serialization_mismatch',
-      serializationDiagnostics(plannedRows, parsedRows, 'prepare_round_trip', 'planned_to_parsed'),
-    );
-  }
-
-  if (status.unsupported.length) {
-    provePreservation(wp, originalRows, plannedRows, content, desired, changes);
-  }
+  checkPlannedSerialization(
+    wp,
+    blocks,
+    originalRows,
+    content,
+    changes,
+    Boolean(status.unsupported.length),
+  );
 
   const plan = { edits, steps, blocks, target, references, touched, spacers };
   checkPatternSpacers(wp, plan, blocks, true);
@@ -2477,65 +2806,7 @@ export async function applyPlan(
     }
   }
 
-  const dateGuards: Array<() => void> = [];
-
-  for (const [index, step] of plan.steps.entries()) {
-    checkPostDateTemplates(
-      wp,
-      step.after,
-      new Set(readTree(wp, stepTargets(step)).map((row) => row.clientId)),
-    );
-    const beforeRows = readTree(wp, step.before);
-    const afterRows = readTree(wp, step.after);
-    const previous = new Map(beforeRows.map((row) => [row.clientId, row]));
-    const parents = (rows: BlockSummary[], path: number[]) =>
-      rows.flatMap((row) =>
-        row.path.length < path.length && containsPath(row.path, path) ? [row.clientId] : [],
-      );
-    const changed = new Set(
-      afterRows.flatMap((row) => {
-        const prior = previous.get(row.clientId);
-        const providers = wp.blocks.getBlockType(row.name)?.providesContext ?? {};
-        const contextAttributes = [
-          'postId',
-          'postType',
-          'query',
-          'previewPostType',
-          'templateSlug',
-        ].flatMap((key) => (providers[key] ? [providers[key]] : []));
-
-        if (row.name === 'core/query') {
-          contextAttributes.push('query');
-        }
-
-        return !prior ||
-          !same(parents(beforeRows, prior.path), parents(afterRows, row.path)) ||
-          (row.name === 'core/post-template' &&
-            (prior.block.innerBlocks?.length ?? 0) > 0 &&
-            !row.block.innerBlocks?.length) ||
-          (postDateField(row) && !same(prior.attributes, row.attributes)) ||
-          contextAttributes.some((key) => !same(prior.attributes[key], row.attributes[key]))
-          ? [row.clientId]
-          : [];
-      }),
-    );
-
-    if (step.edit.op !== 'remove') {
-      dateGuards.push(await preparePostDates(wp, step.before, changed));
-    }
-
-    dateGuards.push(await preparePostDates(wp, step.after, changed));
-    await prepareQueryNormalization(
-      wp,
-      step.before,
-      step.after,
-      step.edit.op === 'move'
-        ? readTree(wp, stepTargets(step)).map((row) => row.block)
-        : stepTargets(step),
-      originalIds,
-      index,
-    );
-  }
+  const dateGuards = await preparePlanDateGuards(wp, plan, originalIds);
 
   if (initialize) {
     // Only inserted trees need a preview resolved up front. An attribute edit
@@ -2562,23 +2833,7 @@ export async function applyPlan(
   let dispatchedEdits = 0;
 
   const matches = (expected: Block[]) => {
-    checkPatternSpacers(wp, plan, documentBlocks(wp));
-
-    if (initialize) {
-      checkInitialized(wp, expected, documentBlocks(wp), exactIds);
-    } else {
-      const currentBlocks = documentBlocks(wp);
-      const currentState = blockState(readTree(wp, currentBlocks));
-      const expectedState = blockState(readTree(wp, expected));
-      assert(same(currentState, expectedState), 'prepared_content_changed');
-      assert(
-        same(
-          readTree(wp, currentBlocks).map((row) => row.clientId),
-          readTree(wp, expected).map((row) => row.clientId),
-        ),
-        'prepared_content_changed',
-      );
-    }
+    checkAppliedTree(wp, plan, expected, initialize, exactIds);
   };
 
   try {
@@ -2640,47 +2895,7 @@ export async function applyPlan(
 
       // Planning read the reference moments ago in this call. Reading it again
       // here would leave an await between the guards above and the write.
-      if (
-        edit.op === 'update_reference' ||
-        edit.op === 'update' ||
-        edit.op === 'update_style' ||
-        edit.op === 'set_block_style'
-      ) {
-        await actions.updateBlockAttributes(
-          at(live, edit.path).clientId,
-          copyAttributes(step.update!),
-        );
-      } else if (edit.op === 'move') {
-        const block = at(live, edit.path);
-        const destination = children(step.before, edit.parent);
-
-        const index =
-          edit.index ?? destination.length - (same(edit.parent, edit.path.slice(0, -1)) ? 1 : 0);
-
-        await actions.moveBlocksToPosition(
-          [block.clientId],
-          parent_id(wp, live, edit.path.slice(0, -1)),
-          parent_id(wp, live, edit.parent),
-          index,
-        );
-      } else if ('parent' in edit) {
-        await actions.insertBlocks(
-          copyTree(step.blocks),
-          edit.index ?? children(live, edit.parent).length,
-          parent_id(wp, live, edit.parent),
-          false,
-        );
-      } else if (edit.op === 'remove') {
-        if (step.after.length) {
-          await actions.removeBlocks([at(live, edit.path).clientId], false);
-        } else {
-          // removeBlocks recreates a default block when the document becomes empty.
-          // The removal policy passed above; reset keeps this planned empty state.
-          await resetDocument(wp, [], () => matches(step.before), dispatch);
-        }
-      } else if (edit.op === 'replace') {
-        await actions.replaceBlocks([at(live, edit.path).clientId], copyTree(step.blocks), null);
-      }
+      await dispatchPlanStep(wp, actions, step, live, matches, dispatch);
 
       if (initialize) {
         await withinInitialization(settle, budget);
@@ -2688,63 +2903,19 @@ export async function applyPlan(
         await settle();
       }
 
-      const targets = stepTargets(step);
-
-      if (initialize && targets.length) {
-        const hiddenQueryDescendants = new Set<string>();
-
-        if (['update', 'update_style', 'set_block_style'].includes(step.edit.op)) {
-          for (const target of targets) {
-            if (target.name !== 'core/query' || !originalIds.has(target.clientId)) {
-              continue;
-            }
-
-            for (const row of readTree(wp, target.innerBlocks ?? [])) {
-              if (originalIds.has(row.clientId)) {
-                hiddenQueryDescendants.add(row.clientId);
-                affected.delete(row.clientId);
-              }
-            }
-          }
-        }
-
-        const targetRows = readTree(wp, targets).filter(
-          (row) => !hiddenQueryDescendants.has(row.clientId) && !hiddenComments.has(row.clientId),
-        );
-
-        for (const row of targetRows) {
-          affected.add(row.clientId);
-        }
-
-        if (step === plan.steps.at(-1)) {
-          await settleInitialization(
-            wp,
-            step.after,
-            exactIds,
-            affected,
-            budget,
-            retainMissingSelection,
-            () => {
-              for (const check of dateGuards) {
-                check();
-              }
-            },
-          );
-        } else {
-          // Intermediate containers must mount and refresh insertion policies.
-          // Defer leaf initialization and the quiet interval to the final tree;
-          // later edits may replace these descendants entirely.
-          const containers = new Set(
-            targetRows.flatMap((row) => (row.block.innerBlocks?.length ? [row.clientId] : [])),
-          );
-          await renderAffected(wp, containers, budget, retainMissingSelection, () => {
-            for (const check of dateGuards) {
-              check();
-            }
-          });
-          checkInitialized(wp, step.after, documentBlocks(wp), exactIds);
-        }
-      }
+      await settleStepTargets(
+        wp,
+        plan,
+        step,
+        initialize,
+        originalIds,
+        affected,
+        hiddenComments,
+        exactIds,
+        budget,
+        retainMissingSelection,
+        dateGuards,
+      );
 
       await requireContexts(
         wp,
@@ -2761,41 +2932,7 @@ export async function applyPlan(
         },
       );
 
-      // New parents only acquire their contextual allowed-block lists after
-      // insertion. Like native paste, nested children are not checked against
-      // template locks; a locked template that disagrees resyncs natively and
-      // fails the initialization check instead.
-      for (const block of step.blocks) {
-        const checkChildren = (parent: Block): void => {
-          for (const child of parent.innerBlocks ?? []) {
-            if (step.comments?.hidden.has(child.clientId)) {
-              continue;
-            }
-
-            const settings = store.getBlockListSettings?.(parent.clientId);
-            assert(settings, 'native_insertion_context_unavailable');
-            const details = { block_name: child.name, parent_name: parent.name };
-            const allowed = settings.allowedBlocks;
-            const admitted = Array.isArray(allowed) && allowed.includes(child.name);
-            assert(!Array.isArray(allowed) || admitted, 'insertion_refused', {
-              ...details,
-              constraint: 'parent_allowed_blocks',
-            });
-            const parents = wp.blocks.getBlockType(child.name)?.parent;
-            assert(
-              !parents ||
-                admitted ||
-                parents.includes(parent.name) ||
-                wp.blocks.getBlockType(parent.name)?.allowedBlocks?.includes(child.name),
-              'insertion_refused',
-              { ...details, constraint: 'block_parent' },
-            );
-            checkChildren(child);
-          }
-        };
-
-        checkChildren(block);
-      }
+      checkInsertedChildren(wp, store, step);
 
       if (step.comments) {
         checkEmptyComments(wp, plan.target, step.comments);

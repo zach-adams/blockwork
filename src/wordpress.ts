@@ -137,7 +137,7 @@ export interface OfferedPattern {
   blocks: Block[];
 }
 
-interface BlockEditor {
+export interface BlockEditor {
   __experimentalGetAllowedPatterns?(rootClientId?: string): OfferedPattern[];
   getBlocks(rootClientId?: string): Block[];
   getSettings?(): EditorStyleSettings;
@@ -170,7 +170,7 @@ interface EditorActions {
   setDeviceType?(device: string): void;
 }
 
-interface BlockActions {
+export interface BlockActions {
   __unstableSetTemporarilyEditingAsBlocks?(clientId: string): void | Promise<void>;
   selectBlock?(clientId: string, initialPosition: null): void;
   resetSelection?(
