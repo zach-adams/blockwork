@@ -37,7 +37,8 @@ explicitly authorized for testing.
 
 ## Local installation
 
-Run `pnpm build` to make a release package. For local development, run
+Run `pnpm build` to check and make a release package, or `pnpm package` to make it
+without the checks. For local development, run
 `pnpm local:install` to build and install the development package. Follow the
 [local desktop workflow](docs/development.md#local-desktop-plugin) to verify the
 installed files and reload the app if needed.
