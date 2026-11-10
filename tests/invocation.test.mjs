@@ -225,6 +225,8 @@ test('invocation enforces forty-five seconds without replaying or releasing a pe
     assert.equal(result.diagnostics.elapsed_ms, 45000);
     assert.equal(result.next, operation === 'save' ? 'check_status_do_not_replay' : 'retry');
 
+    if (operation === 'save') assert.equal(result.persistence, 'uncertain');
+
     if (operation !== 'save') assert.doesNotMatch(result.hint, /receipt|uncertain mutation|Never replay/);
     assert.equal(evaluations, 1);
   }

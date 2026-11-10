@@ -12,7 +12,7 @@ export interface BrowserCapability {
 
 export interface InvocationOptions {
   write_receipt(receipt: JsonObject): Promise<void>;
-  // A batch may stop observing earlier. The page job is never replayed or cancelled.
+  // A caller may stop observing earlier. The page job is never replayed or cancelled.
   deadline?: number;
 }
 
@@ -515,6 +515,7 @@ function hostFailure(request: JsonObject, code: string, attempt: HostAttempt): J
       error: code,
       operation: request.operation,
       next: unconfirmed.get(String(request.operation)) ?? 'check_status_do_not_replay',
+      persistence: request.operation === 'save' ? 'uncertain' : undefined,
       diagnostics,
       hint:
         bindingHint +

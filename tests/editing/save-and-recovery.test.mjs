@@ -396,6 +396,62 @@ generated(
   },
 );
 
+test('save deadline stops observing a committed response and recovers without replay', async t => {
+  await withDocument(site, seed(), async ({ blockwork, tab, id }) => {
+    assert.equal((await blockwork.edit({ edits: [update(0, 'Desired')] })).ok, true);
+    let resume;
+    const held = new Promise(resolve => { resume = resolve; });
+    const clock = Date.now.bind(Date);
+    let offset = 0;
+    let writes = 0;
+    const stop = await site.intercept(tab, {
+      urlPattern: '*wp-json*',
+      stage: 'Response',
+      decide: async ({ request }) => {
+        if (!request.url.includes(`/pages/${id}`)) return 'pass';
+
+        // Spend preparation's budget without making the real editor wait 40 seconds.
+        if (request.method === 'GET' && offset === 0) offset = 40000;
+
+        if (['POST', 'PUT'].includes(request.method)) {
+          writes++;
+          await held;
+        }
+
+        return 'pass';
+      },
+    });
+    t.mock.method(Date, 'now', () => clock() + offset);
+
+    try {
+      const saved = await blockwork.save();
+      assert.equal(saved.error, 'browser_operation_pending', JSON.stringify(saved));
+      assert.equal(saved.operation, 'save');
+      assert.equal(saved.persistence, 'uncertain');
+      assert.equal(saved.next, 'check_status_do_not_replay');
+      assert.ok(saved.diagnostics.budget_ms > 0 && saved.diagnostics.budget_ms <= 5000);
+      assert.equal(writes, 1);
+      const receipt = await blockwork.read_receipt();
+      assert.ok(receipt);
+      assert.equal((await storedDocument(site, id)).content, doc(paragraph('Desired'), paragraph('Second')));
+      assert.equal((await blockwork.save()).error, 'status_required');
+      assert.equal(writes, 1);
+      t.mock.restoreAll();
+      resume();
+      await waitFor(site, tab, '!window.__blockwork_editor.busy');
+      assert.equal((await blockwork.status()).busy, false);
+      const recovered = await blockwork.call({ operation: 'recover', target: receipt.target, receipt });
+      assert.equal(recovered.outcome, 'matched_desired', JSON.stringify(recovered));
+      assert.equal(recovered.persistence, 'verified');
+      assert.equal(writes, 1);
+    } finally {
+      t.mock.restoreAll();
+      resume();
+      await stop();
+    }
+  });
+});
+
 for (const scenario of transportCases) {
   test(`save recovery handles ${scenario.name} without replay`, async () => {
     await withDocument(site, seed(), async ({ blockwork, tab, id, before }) => {

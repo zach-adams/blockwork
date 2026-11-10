@@ -1692,13 +1692,14 @@ export async function createBlockwork(tab, options = {}) {
     // Two page calls: the first returns the receipt, which is stored durably
     // before the second call writes to WordPress.
     async save(request = {}) {
-      const prepared = await editor('prepare_save', request);
+      const deadline = Date.now() + 45000;
+      const prepared = await editor('prepare_save', request, false, deadline);
 
       if (!prepared.ok || !prepared.receipt) {
         return prepared;
       }
 
-      return editor('save', { ...request, receipt: prepared.receipt });
+      return editor('save', { ...request, receipt: prepared.receipt }, false, deadline);
     },
     async status(deadline) {
       const result = await editor('status', {}, false, deadline);

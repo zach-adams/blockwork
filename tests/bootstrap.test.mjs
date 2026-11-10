@@ -698,6 +698,69 @@ test('save stores the preparation receipt before the second page call', async (t
   assert.deepEqual(f.requests.map(request => request.operation), ['connect', 'prepare_save', 'save']);
 });
 
+test('save shares one 45-second budget and retains recovery when the write is pending', async t => {
+  const receipt = { token: 'prepared', target };
+  let now = Date.now();
+  const f = await hostFixture(t, async request => {
+    if (request.operation === 'connect') return { ok: true, target };
+
+    now += 40000;
+
+    return { ok: true, receipt };
+  });
+  await f.host.connect(connection);
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(globalThis, 'setTimeout', resolve => setImmediate(resolve));
+  const started = now;
+  const send = f.browser.send;
+  const timeouts = [];
+  f.browser.send = async (method, params, options) => {
+    if (f.requests.at(-1)?.operation === 'save' && method === 'Runtime.getProperties') {
+      timeouts.push(options.timeoutMs);
+      now += 1000;
+
+      return { internalProperties: [{ name: '[[PromiseState]]', value: { value: 'pending' } }] };
+    }
+
+    return send(method, params, options);
+  };
+
+  const result = await f.host.save();
+  assert.equal(now - started, 45000);
+  assert.deepEqual(timeouts, [5000, 4000, 3000, 2000, 1000]);
+  assert.equal(result.error, 'browser_operation_pending');
+  assert.equal(result.persistence, 'uncertain');
+  assert.equal(result.next, 'check_status_do_not_replay');
+  assert.match(result.hint, /receipt/);
+  assert.match(result.hint, /Never replay an uncertain mutation/);
+  assert.deepEqual(await f.host.read_receipt(), receipt);
+  assert.deepEqual(f.requests.map(request => request.operation), ['connect', 'prepare_save', 'save']);
+  assert.equal((await f.host.save()).error, 'status_required');
+  assert.equal(f.requests.length, 3);
+});
+
+test('save never submits the write if preparation consumes the shared deadline', async t => {
+  const receipt = { token: 'prepared', target };
+  let now = Date.now();
+  const f = await hostFixture(t, async request => {
+    if (request.operation === 'connect') return { ok: true, target };
+
+    if (request.operation === 'prepare_save') now += 45000;
+
+    return { ok: true, receipt };
+  });
+  await f.host.connect(connection);
+  t.mock.method(Date, 'now', () => now);
+  const result = await f.host.save();
+  assert.equal(result.error, 'browser_deadline_exhausted');
+  assert.equal(result.operation, 'save');
+  assert.equal(result.operation_started, false);
+  assert.equal(result.persistence, 'not_attempted');
+  assert.match(result.hint, /No browser operation started/);
+  assert.deepEqual(await f.host.read_receipt(), receipt);
+  assert.deepEqual(f.requests.map(request => request.operation), ['connect', 'prepare_save']);
+});
+
 test('save stops after unchanged or failed preparation', async (t) => {
   for (const prepared of [{ ok: true, persistence: 'unchanged' }, { ok: false, error: 'saved_record_changed', hint: 'Read current state' }]) {
     const f = await hostFixture(t, async request => request.operation === 'connect' ? { ok: true, target } : prepared);

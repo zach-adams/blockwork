@@ -31,6 +31,14 @@ one. With `preservation_status: "verified_after_read"` it means the edit and
 unsupported content were preserved exactly, not that the whole document is
 supported.
 
+Both page calls share a 45-second caller deadline, including receipt storage
+between them. If preparation uses the budget, the second call refuses with
+`browser_deadline_exhausted`, `operation_started: false`, and
+`persistence: "not_attempted"`. If observation times out after the save may have
+started, persistence is `uncertain`. Keep the stored receipt, call `status()`
+until `busy` is false, and reconcile with `recover`. Never replay that save.
+The deadline stops observation; it does not cancel a page job or WordPress write.
+
 Verified persistence covers content and fields exposed through the document's
 REST schema. It cannot verify plugin-owned metadata absent from REST. For a
 request to verify plugin settings, inspect a site-provided observable interface
