@@ -1915,3 +1915,85 @@ test('copy_media maps uploads with different stored bytes without replaying them
   assert.equal((await f.destination.host.copy_media(f.request)).complete, true);
   assert.equal(f.destination.requests.filter(request => request.operation === 'save_resource').length, 1);
 });
+
+test('capture schema preserves authored first-field errors before browser work', async t => {
+  const f = await hostFixture(t, () => assert.fail('invalid capture reached the engine'));
+  const cases = [
+    [{ extra: true, keep_notices: 'yes' }, 'extra', 'absent; use only url, widths, selector, states, measure, and keep_notices'],
+    [{ keep_notices: 'yes', url: 'bad' }, 'keep_notices', 'true or false'],
+    [{ widths: [null, ...Array(6).fill('mobile')] }, 'widths', 'a list of one to six widths'],
+    [{ widths: ['mobile', 'mobile', null] }, 'widths.1', 'a distinct desktop, tablet, mobile, or whole number of CSS pixels from 320 to 2560'],
+    [{ states: { extra: true } }, 'states.extra', 'absent; use only selector and pseudo'],
+    [{ states: {} }, 'states.selector', 'a CSS selector string of 1 to 500 characters'],
+    [{ states: { selector: '.hero' } }, 'states.pseudo', 'a list of 1 to 5 distinct pseudo-classes'],
+    [{ measure: { selectors: [null, ...Array(20).fill('.hero')] } }, 'measure.selectors', 'a list of 1 to 20 CSS selectors'],
+    [{ measure: { selectors: ['.hero'], properties: [null, ...Array(32).fill('color')] } }, 'measure.properties', 'a list of up to 32 CSS property names'],
+    [{ measure: { selectors: ['.hero'], properties: ['Bad Prop'] } }, 'measure.properties.0', 'a lowercase CSS property name, such as margin-top, min_height, or --brand-gap'],
+  ];
+
+  for (const [request, path, expected] of cases) {
+    const refused = await f.host.capture_page(request);
+    assert.deepEqual([refused.error, refused.next, refused.validation_source], ['invalid_capture', 'correct_request', 'request']);
+    assert.deepEqual(refused.issues, [{ path, expected, hint: `Correct ${path} and call capture_page again. Nothing was resized, navigated or captured.` }]);
+  }
+
+  assert.deepEqual([f.requests, f.emulation, f.navigations, f.shots], [[], [], [], []]);
+});
+
+test('create schema preserves missing fields and unknown-key precedence before discovery', async t => {
+  const f = await hostFixture(t, () => assert.fail('invalid create reached discovery'));
+
+  for (const [request, path, expected] of [
+    [{ extra: true }, 'extra', 'absent; use only target and post_type'],
+    [{ target: [] }, 'target', 'an object with site_url and user_id'],
+    [{ target: { extra: true } }, 'target.extra', 'absent; use only site_url and user_id'],
+    [{ target: {} }, 'post_type', 'a required REST-visible editor type such as page'],
+  ]) {
+    const refused = await f.host.create(request);
+    assert.deepEqual([refused.error, refused.next, refused.operation_started], ['invalid_create', 'correct_request', false]);
+    assert.deepEqual(refused.issues, [{ path, expected }]);
+    assert.equal(refused.hint, `Correct ${path}: expected ${expected}. create takes only target: {site_url, user_id} and post_type.`);
+  }
+
+  assert.deepEqual([f.requests, f.navigations], [[], []]);
+  assert.equal(f.host.read().error, 'connect_required');
+});
+
+test('copy schema preserves collapsed field errors and validates before acquiring either caller', async t => {
+  const f = await mediaCopyFixture(t);
+
+  for (const [fields, path, expected] of [
+    [{ extra: true, source: null }, '', 'source, source_target, target, ids, copy_id, and optional deadline_ms and parent_id only'],
+    [{ source_target: { ...f.request.source_target, extra: true } }, 'source_target', 'an exact http or https site_url and positive user_id'],
+    [{ target: { ...f.request.target, site_url: 'https://user:pass@example.test' } }, 'target', 'an exact http or https site_url and positive user_id'],
+    [{ ids: [1, 1] }, 'ids', '1 to 50 distinct positive attachment IDs'],
+    [{ ids: Array(1) }, 'ids', '1 to 50 distinct positive attachment IDs'],
+    [{ copy_id: 'Uppercase' }, 'copy_id', '1 to 80 lowercase letters, digits, underscores, or hyphens, starting with a letter or digit'],
+    [{ deadline_ms: 44999 }, 'deadline_ms', 'an integer from 45000 to 55000 milliseconds'],
+    [{ parent_id: Number.MAX_SAFE_INTEGER + 1 }, 'parent_id', 'a nonnegative target post ID'],
+  ]) {
+    const refused = await f.destination.host.copy_media({ ...f.request, ...fields });
+    assert.deepEqual([refused.error, refused.next, refused.persistence], ['invalid_media_copy', 'correct_request', 'not_attempted']);
+    assert.deepEqual(refused.issues, [{ path, expected }]);
+    assert.equal(refused.hint, 'Correct the named field. No copy operation started.');
+  }
+
+  assert.deepEqual([f.source.requests, f.destination.requests, f.receipts], [[], [], []]);
+  assert.equal((await f.destination.host.copy_media(f.request)).complete, true);
+});
+
+test('copy URL schemas keep malformed keys and the 2000-entry limit from attachment responses', async t => {
+  for (const mode of ['invalid-url', 'too-many']) {
+    const f = await mediaCopyFixture(t);
+    f.request.ids = [1];
+
+    if (mode === 'invalid-url') f.records[0].source_url = 'constructor';
+    else f.records[0].media_details.sizes = Object.fromEntries(Array.from({ length: 2000 }, (_, index) => [String(index), { source_url: `https://source.example.test/uploads/size-${index}.png` }]));
+
+    const failed = await f.destination.host.copy_media(f.request);
+    assert.deepEqual([failed.error, failed.next], ['media_copy_map_limit', 'resume_media_copy']);
+    assert.equal(failed.hint, 'The map requires at most 2000 absolute http or https URLs of at most 2048 characters. Keep receipts and split IDs into smaller requests with the same copy_id; existing copies will be read.');
+    assert.equal(failed.items[0].receipt.key, f.receipts[0].key);
+    assert.equal(f.destination.requests.filter(({ operation }) => operation === 'save_resource').length, 1);
+  }
+});

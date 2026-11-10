@@ -63,14 +63,11 @@ try {
   }
 
   // Bundled here rather than copied, so the mode cannot come from a stale compile.
-  const { editor, invoker } = await bundles({ debug: development });
+  const { editor, invoker, bootstrap } = await bundles({ debug: development });
   await mkdir(join(temporary, 'blockwork', scripts), { recursive: true });
   await writeFile(join(temporary, 'blockwork', scripts, 'editor.js'), editor);
   await writeFile(join(temporary, 'blockwork', scripts, 'invoke.mjs'), invoker);
-  await copyFile(
-    join(root, 'src/bootstrap.mjs'),
-    join(temporary, 'blockwork', scripts, 'bootstrap.mjs'),
-  );
+  await writeFile(join(temporary, 'blockwork', scripts, 'bootstrap.mjs'), bootstrap);
 
   await mkdir(dirname(output), { recursive: true });
   execFileSync('tar', ['-czf', output, '-C', temporary, 'blockwork'], {

@@ -40,8 +40,9 @@ tools cannot make. After edits, run `pnpm format`, `pnpm lint:fix`, then
 
 Keep editor implementation in `src/` as strict TypeScript. The packaged
 `skills/blockwork/scripts/editor.js` is generated; rebuild it rather than editing
-it. `src/bootstrap.mjs` is the one JavaScript source, copied into the package as
-written. Keep the browser output self-contained and validate external data at entry.
+it. `src/bootstrap.ts` and `src/invocation.ts` are bundled as the host helpers
+`bootstrap.mjs` and `invoke.mjs`. Keep the browser output self-contained and validate
+external data at entry.
 
 ## Error and validation handling
 

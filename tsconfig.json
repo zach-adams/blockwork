@@ -9,7 +9,7 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "types": []
+    "types": ["node"]
   },
   "include": ["src/**/*.ts", "oxlint.config.ts", "tools/oxlint/readability.ts"]
 }

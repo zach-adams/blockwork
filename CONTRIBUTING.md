@@ -7,7 +7,7 @@ for fixture setup, host requirements, and detailed commands.
 ## Source map
 
 - `index.ts`, `session.ts`, and `contracts.ts` route editor operations, manage sessions, and define request contracts.
-- `bootstrap.mjs` and `invocation.ts` connect the desktop host to the browser engine.
+- `bootstrap.ts`, `bootstrap-contracts.ts`, and `invocation.ts` connect the desktop host to the browser engine and validate host requests.
 - `documents.ts`, `document-view.ts`, `shared.ts`, `resources.ts`, and `abilities.ts` handle documents, shared entities, REST resources, and abilities.
 - `edits.ts`, `native-controls.ts`, `initialization.ts`, `inspection.ts`, and `catalog.ts` plan edits and inspect native blocks and controls.
 - `canvas.ts`, `view.ts`, and `measure.ts` prepare and inspect the editor canvas and viewport.

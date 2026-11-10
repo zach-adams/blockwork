@@ -3,12 +3,64 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const mediaCallers = new WeakMap();
+import * as v from 'valibot';
+import type { JsonObject, JsonValue, MediaMap, Target, Width } from './contracts';
+import type { ResourceReceipt } from './resources';
+import type * as Invocation from './invocation';
+import {
+  CaptureSchema,
+  HostMeasureSchema,
+  HostViewSchema,
+  CreateSchema,
+  CopySchema,
+  CopyUrlEntriesSchema,
+  PageSizeSchema,
+  PixelRatioSchema,
+  PageSchema,
+  EvaluationSchema,
+  MetricsSchema,
+  ScreenshotSchema,
+  DomDocumentSchema,
+  DomMatchSchema,
+  IdentitySchema,
+  SignInSchema,
+  measuredPage,
+  requestIssue,
+  mediaCallers,
+  pageWidths,
+} from './bootstrap-contracts';
+import type {
+  BootstrapOptions,
+  HostTab,
+  HostFailure,
+  EngineSuccess,
+  Connected,
+  Discovered,
+  Resizable,
+  Placed,
+  Clip,
+  Size,
+  Screenshot,
+  BlockworkCaller,
+  MediaAccess,
+  MediaRecord,
+  MediaResult,
+  InspectedMedia,
+  StoredMedia,
+  CopyRequest,
+  CaptureMeasure,
+  Page,
+  VisualResult,
+  VisualShot,
+} from './bootstrap-contracts';
 
-// Copied beside the compiled invoker. This host helper never opens a browser or
+// Bundled beside the compiled invoker. This host helper never opens a browser or
 // chooses a tab; the caller supplies the exact host tab. Its cdp capability
 // runs the engine and takes screenshots, and create navigates it with goto.
-export async function createBlockwork(tab, options = {}) {
+export async function createBlockwork(
+  tab: HostTab,
+  options: BootstrapOptions = {},
+): Promise<BlockworkCaller> {
   const capability = await tab.capabilities.get('cdp');
   const source = await readFile(new URL('./editor.js', import.meta.url), 'utf8');
   const invokerUrl = new URL('./invoke.mjs', import.meta.url);
@@ -16,15 +68,21 @@ export async function createBlockwork(tab, options = {}) {
   const manifest = JSON.parse(
     await readFile(new URL('../../../plugin.json', import.meta.url), 'utf8'),
   );
-  const hash = (value) => createHash('sha256').update(value).digest('hex');
-  const build = {
+  const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+  const build: HostBuild = {
     version: manifest.version,
     engine_sha256: hash(source),
     invoker_sha256: hash(invoker),
     bootstrap_sha256: hash(await readFile(new URL(import.meta.url), 'utf8')),
   };
   invokerUrl.searchParams.set('build', build.invoker_sha256);
-  const { callBlockwork, debug, withDebug } = await import(invokerUrl.href);
+  const { callBlockwork, debug, withDebug }: typeof Invocation = await import(invokerUrl.href);
+
+  function debugResult<T extends JsonObject>(result: T, error: unknown): T {
+    // SAFETY: withDebug only adds the optional debug field to the supplied result.
+    return withDebug(result, error) as T;
+  }
+
   // Development builds add the underlying error to failures as `debug`.
   build.debug = debug;
   const directory =
@@ -32,9 +90,9 @@ export async function createBlockwork(tab, options = {}) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   // One file per distinct receipt, so a later save or resource write never
   // overwrites the record of an earlier uncertain one.
-  let receiptPath;
+  let receiptPath: string | undefined;
   const storage = {
-    async write_receipt(receipt) {
+    async write_receipt(receipt: JsonObject) {
       const path = join(directory, `${hash(JSON.stringify(receipt))}.json`);
       await writeFile(`${path}.pending`, JSON.stringify(receipt), {
         encoding: 'utf8',
@@ -69,188 +127,14 @@ export async function createBlockwork(tab, options = {}) {
     'inspect_abilities',
     'run_ability',
   ];
-  // The engine's own request bounds, checked before Blockwork resizes its tab.
-  // A string primitive, checked without coercing values such as objects.
-  const isText = (value) =>
-    Object.prototype.toString.call(value) === '[object String]' && value === value.valueOf();
-  const clientId = (value) => isText(value) && value.length >= 1 && value.length <= 200;
-  const cssProperty = (value) => isText(value) && /^-{0,2}[a-z][a-z0-9_-]{0,80}$/.test(value);
-  const measureKeys = [
-    'blocks',
-    'client_id',
-    'properties',
-    'width',
-    'target',
-    'request_id',
-    'operation',
-  ];
-  const validMeasure = (request) =>
-    Object.keys(request).every((key) => measureKeys.includes(key)) &&
-    (request.client_id === undefined
-      ? Array.isArray(request.blocks) &&
-        request.blocks.length >= 1 &&
-        request.blocks.length <= 20 &&
-        request.blocks.every(clientId)
-      : request.blocks === undefined && clientId(request.client_id)) &&
-    (request.properties === undefined ||
-      (Array.isArray(request.properties) &&
-        request.properties.length <= 32 &&
-        request.properties.every(cssProperty)));
-  // The request as the page receives it, or undefined when it is not JSON.
-  const json = (value) => {
+  // Normalize requests exactly as the page receives them, including sparse arrays.
+  const json = (value: unknown): JsonValue | undefined => {
     try {
       return JSON.parse(JSON.stringify(value));
     } catch {
       return undefined;
     }
   };
-
-  // capture_page request and page-result checks. Its measure uses the editor
-  // measure's default properties.
-  const selectorText = (value) => isText(value) && value.length >= 1 && value.length <= 500;
-  const isRecord = (value) => Object.prototype.toString.call(value) === '[object Object]';
-
-  // The first problem with a capture_page request as {path, expected}, or
-  // nothing. It reads the JSON form, which turns sparse array holes into nulls.
-  function captureIssue(request) {
-    const absent = (path, keys) => ({ path, expected: `absent; use only ${keys}` });
-
-    if (!isRecord(request)) {
-      return {
-        path: '',
-        expected: 'an object with url, widths, selector, states, measure, and keep_notices',
-      };
-    }
-
-    const extra = Object.keys(request).find(
-      (key) => !['url', 'widths', 'selector', 'states', 'measure', 'keep_notices'].includes(key),
-    );
-
-    if (extra !== undefined) {
-      return absent(extra, 'url, widths, selector, states, measure, and keep_notices');
-    }
-
-    const {
-      url,
-      widths = ['desktop', 'mobile'],
-      selector,
-      states,
-      measure,
-      keep_notices,
-    } = request;
-
-    if (![undefined, true, false].includes(keep_notices)) {
-      return { path: 'keep_notices', expected: 'true or false' };
-    }
-
-    if (url !== undefined && !mediaCopyUrl(url)) {
-      return { path: 'url', expected: 'an absolute http or https URL of up to 2048 characters' };
-    }
-
-    if (!Array.isArray(widths) || widths.length < 1 || widths.length > 6) {
-      return { path: 'widths', expected: 'a list of one to six widths' };
-    }
-
-    const width = widths.findIndex(
-      (value, index) => !validWidth(value) || widths.indexOf(value) !== index,
-    );
-
-    if (width !== -1) {
-      return {
-        path: `widths.${width}`,
-        expected:
-          'a distinct desktop, tablet, mobile, or whole number of CSS pixels from 320 to 2560',
-      };
-    }
-
-    if (selector !== undefined && !selectorText(selector)) {
-      return { path: 'selector', expected: 'a CSS selector string of 1 to 500 characters' };
-    }
-
-    if (states !== undefined) {
-      if (!isRecord(states)) {
-        return { path: 'states', expected: 'an object with selector and pseudo' };
-      }
-
-      const extraState = Object.keys(states).find((key) => !['selector', 'pseudo'].includes(key));
-
-      if (extraState !== undefined) {
-        return absent(`states.${extraState}`, 'selector and pseudo');
-      }
-
-      if (!selectorText(states.selector)) {
-        return {
-          path: 'states.selector',
-          expected: 'a CSS selector string of 1 to 500 characters',
-        };
-      }
-
-      const allowed = ['hover', 'focus', 'focus-visible', 'active', 'focus-within'];
-
-      if (!Array.isArray(states.pseudo) || states.pseudo.length < 1 || states.pseudo.length > 5) {
-        return { path: 'states.pseudo', expected: 'a list of 1 to 5 distinct pseudo-classes' };
-      }
-
-      const badState = states.pseudo.findIndex(
-        (value, index) => !allowed.includes(value) || states.pseudo.indexOf(value) !== index,
-      );
-
-      if (badState !== -1) {
-        return {
-          path: `states.pseudo.${badState}`,
-          expected: 'a distinct hover, focus, focus-visible, active, or focus-within',
-        };
-      }
-    }
-
-    if (measure === undefined) {
-      return;
-    }
-
-    if (!isRecord(measure)) {
-      return { path: 'measure', expected: 'an object with selectors and optional properties' };
-    }
-
-    const extraMeasure = Object.keys(measure).find(
-      (key) => !['selectors', 'properties'].includes(key),
-    );
-
-    if (extraMeasure !== undefined) {
-      return absent(`measure.${extraMeasure}`, 'selectors and properties');
-    }
-
-    const { selectors, properties } = measure;
-
-    if (!Array.isArray(selectors) || selectors.length < 1 || selectors.length > 20) {
-      return { path: 'measure.selectors', expected: 'a list of 1 to 20 CSS selectors' };
-    }
-
-    const badSelector = selectors.findIndex((value) => !selectorText(value));
-
-    if (badSelector !== -1) {
-      return {
-        path: `measure.selectors.${badSelector}`,
-        expected: 'a CSS selector string of 1 to 500 characters',
-      };
-    }
-
-    if (properties === undefined) {
-      return;
-    }
-
-    if (!Array.isArray(properties) || properties.length > 32) {
-      return { path: 'measure.properties', expected: 'a list of up to 32 CSS property names' };
-    }
-
-    const badProperty = properties.findIndex((value) => !cssProperty(value));
-
-    if (badProperty !== -1) {
-      return {
-        path: `measure.properties.${badProperty}`,
-        expected: 'a lowercase CSS property name, such as margin-top, min_height, or --brand-gap',
-      };
-    }
-  }
 
   const defaultPageProperties = [
     'font-family',
@@ -262,76 +146,44 @@ export async function createBlockwork(tab, options = {}) {
     'padding',
     'margin',
   ];
-  // One measured element from the page, in the shape its script builds.
-  const validElement = (element, selector, properties) => {
-    if (!isRecord(element) || element.selector !== selector) {
-      return false;
-    }
-
-    if (element.found === false) {
-      return Object.keys(element).length === 2;
-    }
-
-    const { tag, rect, styles } = element;
-    const sameKeys = (value, keys) =>
-      isRecord(value) && Object.keys(value).sort().join() === [...keys].sort().join();
-
-    return (
-      element.found === true &&
-      sameKeys(element, ['selector', 'found', 'tag', 'rect', 'styles']) &&
-      isText(tag) &&
-      tag.length >= 1 &&
-      tag.length <= 100 &&
-      sameKeys(rect, ['x', 'y', 'width', 'height']) &&
-      Object.values(rect).every(Number.isFinite) &&
-      rect.width >= 0 &&
-      rect.height >= 0 &&
-      isRecord(styles) &&
-      Object.keys(styles).length === new Set(properties).size &&
-      properties.every((property) => isText(styles[property]) && styles[property].length <= 200)
-    );
-  };
-
-  const pageProperties = (properties) =>
+  const pageProperties = (properties: string[] | undefined) =>
     (properties?.length ? properties : defaultPageProperties).map((property) =>
       property.startsWith('--') ? property : property.replaceAll('_', '-'),
     );
 
-  const widthNames = ['desktop', 'tablet', 'mobile'];
-  const validWidth = (width) =>
-    widthNames.includes(width) || (Number.isInteger(width) && width >= 320 && width <= 2560);
   // Blockwork resizes only its own background tab, never a user's. The tall
   // window keeps most blocks in one screenshot, and the starting width leaves
   // Gutenberg's tablet and mobile previews room so they are never squeezed.
   const windowHeight = 1080;
   const startWidth = 1600;
   // Front-end widths: a common laptop, tablet, and phone.
-  const pageWidths = { desktop: 1440, tablet: 768, mobile: 390 };
   let busy = false;
   // A view or a resized measure spans several page calls; other calls wait.
   let held = false;
   let creationAttempted = false;
   let connectAttempted = false;
-  let target;
-  let workflow;
+  let target: Target | undefined;
+  let workflow: Connected['workflow'] | undefined;
   // Whether this caller released its session; workflow keeps which kind.
   let released = false;
-  let unresolved;
+  let unresolved: { operation: string; request_id?: JsonObject['request_id'] } | undefined;
   // The tab's size before Blockwork first resized it, which every reset puts
   // back, and whether Blockwork's own size may still be in place.
-  let baseline;
+  let baseline: number[] | undefined;
   let overridden = false;
 
-  const refuse = (operation, error, next, hint) => ({
-    ok: false,
-    error,
-    operation,
-    operation_started: false,
-    next,
-    hint,
-  });
+  const refuse = (
+    operation: JsonObject['operation'],
+    error: string,
+    next: string,
+    hint: string,
+  ): HostFailure => ({ ok: false, error, operation, operation_started: false, next, hint });
 
-  async function call(request, inView = false, deadline) {
+  async function call<T extends EngineSuccess = EngineSuccess>(
+    request: JsonObject,
+    inView = false,
+    deadline?: number,
+  ): Promise<T | HostFailure> {
     if (busy || (held && !inView)) {
       return refuse(
         request.operation,
@@ -341,7 +193,11 @@ export async function createBlockwork(tab, options = {}) {
       );
     }
 
-    if (unresolved && mutations.includes(request.operation)) {
+    if (
+      unresolved &&
+      typeof request.operation === 'string' &&
+      mutations.includes(request.operation)
+    ) {
       return refuse(
         request.operation,
         'status_required',
@@ -357,11 +213,16 @@ export async function createBlockwork(tab, options = {}) {
     try {
       // A tab size a failed reset left behind is undone before other work.
       const unreset = overridden && !inView ? await resetSize(request.operation) : undefined;
-      const result = await callBlockwork(capability, source, request, { ...storage, deadline });
+      // SAFETY: The bundled engine owns its operation-specific result contracts.
+      const result = (await callBlockwork(capability, source, request, {
+        ...storage,
+        deadline,
+      })) as T | HostFailure;
 
       if (
         !result.ok &&
         hostFailures.includes(result.error) &&
+        typeof request.operation === 'string' &&
         mutations.includes(request.operation)
       ) {
         unresolved = { operation: request.operation, request_id: request.request_id };
@@ -375,7 +236,7 @@ export async function createBlockwork(tab, options = {}) {
 
   // A released background document must close, so this caller cannot connect
   // to it again; an attached session can start again in the same tab.
-  const releasedDocument = (operation) =>
+  const releasedDocument = (operation: string) =>
     refuse(
       operation,
       'document_released',
@@ -383,7 +244,12 @@ export async function createBlockwork(tab, options = {}) {
       'This caller released its background document, and that tab no longer renews its lock. Close the tab, open a fresh editor tab, and create a new caller for it.',
     );
 
-  function editor(operation, request = {}, inView = false, deadline) {
+  function editor<T extends EngineSuccess = EngineSuccess>(
+    operation: string,
+    request: JsonObject = {},
+    inView = false,
+    deadline?: number,
+  ): Promise<T | HostFailure> | HostFailure {
     if (!target && released && workflow === 'background') {
       return releasedDocument(operation);
     }
@@ -399,12 +265,16 @@ export async function createBlockwork(tab, options = {}) {
       );
     }
 
-    return call({ ...request, operation, target, request_id: randomUUID() }, inView, deadline);
+    return call<T>({ ...request, operation, target, request_id: randomUUID() }, inView, deadline);
   }
 
   // Sets the tab's window size, or clears Blockwork's override without a
   // width. Returns a failure or nothing.
-  async function emulate(operation, width, height = windowHeight) {
+  async function emulate(
+    operation: JsonObject['operation'],
+    width?: number,
+    height = windowHeight,
+  ): Promise<HostFailure | undefined> {
     try {
       if (width === undefined) {
         await capability.send('Emulation.clearDeviceMetricsOverride', {});
@@ -417,7 +287,7 @@ export async function createBlockwork(tab, options = {}) {
         });
       }
     } catch (error) {
-      return withDebug(
+      return debugResult(
         refuse(
           operation,
           'tab_resize_failed',
@@ -431,9 +301,11 @@ export async function createBlockwork(tab, options = {}) {
 
   // One page request at a width. The page asks for a window size when the
   // canvas is not at that width yet; one correction follows the first resize.
-  async function sized(request) {
+  async function sized<T extends Resizable = Resizable>(
+    request: SizedRequest,
+  ): Promise<T | HostFailure> {
     for (let resized = 0; ; resized++) {
-      const result = await editor(request.operation, request, true);
+      const result = await editor<T>(request.operation, request, true);
 
       if (!result.ok || !result.resize) {
         return result;
@@ -460,16 +332,17 @@ export async function createBlockwork(tab, options = {}) {
   }
 
   // The window size the page sees, as { size } or { error }.
-  async function pageSize() {
+  async function pageSize(): Promise<{ size?: number[]; error?: unknown }> {
     try {
-      const { result } = await capability.send('Runtime.evaluate', {
-        expression: '[innerWidth, innerHeight]',
-        returnByValue: true,
-      });
+      const { result } = v.parse(
+        EvaluationSchema,
+        await capability.send('Runtime.evaluate', {
+          expression: '[innerWidth, innerHeight]',
+          returnByValue: true,
+        }),
+      );
 
-      return result?.value?.every?.((size) => Number.isFinite(size) && size > 0)
-        ? { size: result.value }
-        : { error: undefined };
+      return v.is(PageSizeSchema, result?.value) ? { size: result.value } : { error: undefined };
     } catch (error) {
       return { error };
     }
@@ -478,7 +351,7 @@ export async function createBlockwork(tab, options = {}) {
   // Records the tab's own size, once, and marks Blockwork's size as in place.
   // A size an earlier failed reset left is reset first, so it never becomes
   // the baseline. Returns a failure or nothing; it resizes nothing itself.
-  async function startResizing(operation) {
+  async function startResizing(operation: string): Promise<HostFailure | undefined> {
     const unreset = overridden ? await resetSize(operation) : undefined;
 
     if (unreset) {
@@ -489,7 +362,7 @@ export async function createBlockwork(tab, options = {}) {
       const read = await pageSize();
 
       if (!read.size) {
-        return withDebug(
+        return debugResult(
           refuse(
             operation,
             'tab_size_unavailable',
@@ -509,14 +382,14 @@ export async function createBlockwork(tab, options = {}) {
   // Clears Blockwork's override, then sets the baseline again if clearing left
   // another size, as a hidden tab can take the browser's own size. Until this
   // succeeds, the next call tries again. Returns a failure or nothing.
-  async function resetSize(operation) {
+  async function resetSize(operation: JsonObject['operation']): Promise<HostFailure | undefined> {
     let failed = await emulate(operation);
 
     if (!failed) {
       const read = await pageSize();
 
       if (!read.size) {
-        failed = withDebug(
+        failed = debugResult(
           refuse(
             operation,
             'tab_resize_unverified',
@@ -525,8 +398,8 @@ export async function createBlockwork(tab, options = {}) {
           ),
           read.error,
         );
-      } else if (read.size[0] !== baseline[0] || read.size[1] !== baseline[1]) {
-        failed = await emulate(operation, baseline[0], baseline[1]);
+      } else if (read.size[0] !== baseline![0] || read.size[1] !== baseline![1]) {
+        failed = await emulate(operation, baseline![0], baseline![1]);
       }
     }
 
@@ -545,10 +418,13 @@ export async function createBlockwork(tab, options = {}) {
   // Runs page requests in a held sequence. A background tab starts at the
   // starting size. Afterward the tab's own size comes back first, so the
   // editor's device and scroll positions return at that size.
-  async function holding(operation, run) {
+  async function holding<T extends { ok?: boolean }>(
+    operation: string,
+    run: () => Promise<T>,
+  ): Promise<T | HostFailure> {
     const owned = workflow === 'background';
     held = true;
-    let result;
+    let result!: T | HostFailure;
 
     try {
       const failed = owned
@@ -575,7 +451,11 @@ export async function createBlockwork(tab, options = {}) {
 
   // Checks a screenshot against the region it was taken of. Returns its size
   // or a failure.
-  function checkedImage(operation, image, clip) {
+  function checkedImage(
+    operation: string,
+    image: Uint8Array,
+    clip: Clip,
+  ): HostFailure | { ok?: never; size: Size } {
     const size = imageSize(image);
 
     if (!size) {
@@ -612,11 +492,14 @@ export async function createBlockwork(tab, options = {}) {
 
   // Returns a refusal when the page's hidden notices could not be put back.
   async function putBackNotices() {
-    let response;
+    let response: v.InferOutput<typeof EvaluationSchema> | undefined;
     let failure;
 
     try {
-      response = await capability.send('Runtime.evaluate', { expression: restoreNotices });
+      response = v.parse(
+        EvaluationSchema,
+        await capability.send('Runtime.evaluate', { expression: restoreNotices }),
+      );
     } catch (error) {
       failure = error;
     }
@@ -625,14 +508,14 @@ export async function createBlockwork(tab, options = {}) {
       return;
     }
 
-    return withDebug(
+    return debugResult(
       refuse(
         'capture_page',
         'notice_restore_failed',
         'close_tab',
         'The browser could not put back the cookie or consent notice it hid for the shots. Close your front-end tab before relying on it.',
       ),
-      failure ?? response.exceptionDetails,
+      failure ?? response?.exceptionDetails,
     );
   }
 
@@ -642,7 +525,11 @@ export async function createBlockwork(tab, options = {}) {
   // repeating while animations end. Then it measures the first match of each
   // measure selector. A cookie or consent notice stays hidden until
   // restoreNotices, unless keepNotices is set.
-  async function settlePage(selector, measure, keepNotices) {
+  async function settlePage(
+    selector: string | undefined,
+    measure: CaptureMeasure | undefined,
+    keepNotices: boolean | undefined,
+  ): Promise<Page | HostFailure> {
     const input = {
       selector: selector ?? null,
       selectors: measure?.selectors ?? [],
@@ -895,64 +782,62 @@ export async function createBlockwork(tab, options = {}) {
       measure_response_too_large:
         'The measurements at one width exceeded 64 KiB. Measure fewer selectors or request fewer properties.',
     };
-    let response;
+    let response: v.InferOutput<typeof EvaluationSchema> | undefined;
     let failure;
 
     try {
-      response = await capability.send('Runtime.evaluate', {
-        expression,
-        awaitPromise: true,
-        returnByValue: true,
-      });
+      response = v.parse(
+        EvaluationSchema,
+        await capability.send('Runtime.evaluate', {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+        }),
+      );
     } catch (error) {
       failure = error;
     }
 
     const shown = response?.result?.value;
-    const measured =
-      [shown?.width, shown?.height].every((size) => Number.isFinite(size) && size > 0) &&
-      [shown?.scroll_x, shown?.scroll_y, shown?.scroll_width].every(Number.isFinite) &&
-      shown.scroll_width > 0 &&
-      Number.isFinite(shown?.selector_offset) &&
-      shown.selector_offset >= 0 &&
-      shown.selector_offset <= shown.height / 2 &&
-      Number.isInteger(shown?.finished_animations) &&
-      shown.finished_animations >= 0 &&
-      Number.isInteger(shown?.hidden_notices) &&
-      shown.hidden_notices >= 0 &&
-      Array.isArray(shown?.elements) &&
-      shown.elements.length === input.selectors.length &&
-      shown.elements.every((element, index) =>
-        validElement(element, input.selectors[index], input.properties),
-      );
+    const measured = measuredPage(shown, input.selectors, input.properties);
     // The page checks this too; the caller holds it to the same bytes.
     const oversized =
-      measured && new TextEncoder().encode(JSON.stringify(shown.elements)).length > 65536;
+      measured && !v.is(v.pipe(v.string(), v.maxBytes(65536)), JSON.stringify(shown.elements));
 
-    if (shown?.ok === true && measured && !oversized) {
+    if (measured && v.is(PageSchema, shown) && !oversized) {
       return shown;
     }
 
-    let code = Object.hasOwn(hints, shown?.error) ? shown.error : 'page_unavailable';
+    const failedPage = v.safeParse(
+      v.object({ error: v.optional(v.unknown()), field: v.optional(v.unknown()) }),
+      shown,
+    );
+    const pageError = failedPage.success ? failedPage.output.error : undefined;
+    const matchedHint = Object.entries(hints).find(([code]) => code === pageError);
+    let [code, hint] = matchedHint ?? ['page_unavailable', hints.page_unavailable];
 
     if (oversized) {
       code = 'measure_response_too_large';
+      hint = hints.measure_response_too_large;
     }
 
-    const refused = refuse('capture_page', code, 'correct_request', hints[code]);
+    const refused = refuse('capture_page', code, 'correct_request', hint);
     // Only the field names this script itself reports.
-    const field = /^(selector|measure\.selectors\.\d{1,2})$/.test(shown?.field)
-      ? shown.field
-      : null;
+    const reportedField = failedPage.success ? failedPage.output.field : undefined;
+    const field =
+      v.is(v.string(), reportedField) &&
+      /^(selector|measure\.selectors\.\d{1,2})$/.test(reportedField)
+        ? reportedField
+        : null;
 
-    return withDebug(
+    return debugResult(
       field ? { ...refused, diagnostics: { field } } : refused,
       failure ?? response?.exceptionDetails,
     );
   }
 
   // A screenshot clip is in document pixels, so a viewport's starts at the scroll.
-  const viewport = (shown) => ({
+  const viewport = (shown: Page): Clip => ({
     x: shown.scroll_x,
     y: shown.scroll_y,
     width: shown.width,
@@ -963,7 +848,12 @@ export async function createBlockwork(tab, options = {}) {
   // runs the intersection and animation-end handlers that reveal more, so
   // what the settle after it finishes or loads can need another frame. The
   // page is painted and settled three times before the shot.
-  async function paintHidden(shown, selector, measure, keepNotices) {
+  async function paintHidden(
+    shown: Page,
+    selector: string | undefined,
+    measure: CaptureMeasure | undefined,
+    keepNotices: boolean | undefined,
+  ): Promise<Page | HostFailure> {
     let settled = shown;
 
     for (let paint = 0; paint < 3; paint++) {
@@ -992,10 +882,9 @@ export async function createBlockwork(tab, options = {}) {
   // large images in a hidden tab blank or pixelated. CDP takes the clip in
   // device-independent pixels, so the CSS clip is multiplied by the browser
   // zoom; the scale then returns CSS pixels, matching measured rects.
-  async function screenshot(operation, clip) {
-    const positive = (value) => Number.isFinite(value) && value > 0;
-    const failed = (error) =>
-      withDebug(
+  async function screenshot(operation: string, clip: Clip): Promise<Screenshot | HostFailure> {
+    const failed = (error: unknown): HostFailure =>
+      debugResult(
         refuse(
           operation,
           'screenshot_failed',
@@ -1008,15 +897,22 @@ export async function createBlockwork(tab, options = {}) {
     let screenshotError;
 
     try {
-      const metrics = await capability.send('Page.getLayoutMetrics', {});
+      const metrics = v.parse(MetricsSchema, await capability.send('Page.getLayoutMetrics', {}));
       const { zoom, scale: pinch } = metrics?.cssVisualViewport ?? {};
-      const ratio = await capability.send('Runtime.evaluate', {
-        expression: 'devicePixelRatio',
-        returnByValue: true,
-      });
+      const ratio = v.parse(
+        EvaluationSchema,
+        await capability.send('Runtime.evaluate', {
+          expression: 'devicePixelRatio',
+          returnByValue: true,
+        }),
+      );
       const pixels = ratio?.result?.value;
 
-      if (!positive(zoom) || !positive(pinch) || !positive(pixels)) {
+      if (
+        !v.is(PixelRatioSchema, zoom) ||
+        !v.is(PixelRatioSchema, pinch) ||
+        !v.is(PixelRatioSchema, pixels)
+      ) {
         return failed(ratio?.exceptionDetails);
       }
 
@@ -1031,18 +927,21 @@ export async function createBlockwork(tab, options = {}) {
         );
       }
 
-      const shot = await capability.send('Page.captureScreenshot', {
-        format: 'jpeg',
-        quality: 90,
-        clip: {
-          x: clip.x * zoom,
-          y: clip.y * zoom,
-          width: clip.width * zoom,
-          height: clip.height * zoom,
-          scale: 1 / pixels,
-        },
-      });
-      const bytes = isText(shot?.data) ? Buffer.from(shot.data, 'base64') : undefined;
+      const shot = v.parse(
+        ScreenshotSchema,
+        await capability.send('Page.captureScreenshot', {
+          format: 'jpeg',
+          quality: 90,
+          clip: {
+            x: clip.x * zoom,
+            y: clip.y * zoom,
+            width: clip.width * zoom,
+            height: clip.height * zoom,
+            scale: 1 / pixels,
+          },
+        }),
+      );
+      const bytes = v.is(v.string(), shot?.data) ? Buffer.from(shot.data, 'base64') : undefined;
 
       if (bytes?.length) {
         image = bytes;
@@ -1060,13 +959,13 @@ export async function createBlockwork(tab, options = {}) {
     return checked.ok === false ? checked : { image, image_size: checked.size };
   }
 
-  async function connect(request, inCreate = false) {
+  async function connect(request: JsonObject, inCreate = false): Promise<Connected | HostFailure> {
     if (released && workflow === 'background') {
       return releasedDocument('connect');
     }
 
     connectAttempted = true;
-    const result = await call({ ...request, operation: 'connect' }, inCreate);
+    const result = await call<Connected>({ ...request, operation: 'connect' }, inCreate);
 
     if (result.ok) {
       target = result.target;
@@ -1077,29 +976,13 @@ export async function createBlockwork(tab, options = {}) {
     return result;
   }
 
-  async function create(input) {
+  async function create(input: unknown): Promise<JsonObject> {
     const request = json(input);
-    let issue;
+    const parsed = v.safeParse(CreateSchema, request);
 
-    if (!isRecord(request)) {
-      issue = { path: '', expected: 'an object with target and post_type' };
-    } else if (Object.keys(request).some((key) => !['target', 'post_type'].includes(key))) {
-      issue = {
-        path: Object.keys(request).find((key) => !['target', 'post_type'].includes(key)),
-        expected: 'absent; use only target and post_type',
-      };
-    } else if (!isRecord(request.target)) {
-      issue = { path: 'target', expected: 'an object with site_url and user_id' };
-    } else if (Object.keys(request.target).some((key) => !['site_url', 'user_id'].includes(key))) {
-      issue = {
-        path: `target.${Object.keys(request.target).find((key) => !['site_url', 'user_id'].includes(key))}`,
-        expected: 'absent; use only site_url and user_id',
-      };
-    } else if (!Object.hasOwn(request, 'post_type')) {
-      issue = { path: 'post_type', expected: 'a required REST-visible editor type such as page' };
-    }
+    if (!parsed.success) {
+      const issue = requestIssue(parsed.issues[0]);
 
-    if (issue) {
       return {
         ...refuse(
           'create',
@@ -1139,12 +1022,15 @@ export async function createBlockwork(tab, options = {}) {
     }
 
     held = true;
-    let document;
+    let document: JsonObject | undefined;
     let navigated = false;
 
     try {
       // Native discovery validates the site, user, and type before navigation.
-      const discovery = await call({ ...request, operation: 'discover', limit: 1 }, true);
+      const discovery = await call<Discovered>(
+        { ...parsed.output, operation: 'discover', limit: 1 },
+        true,
+      );
 
       if (!discovery.ok) {
         return discovery;
@@ -1174,9 +1060,9 @@ export async function createBlockwork(tab, options = {}) {
           },
           { timeoutMs: Math.max(1, until - Date.now()) },
         );
-        const identity = observed?.result?.value;
+        const identity = v.parse(EvaluationSchema, observed).result?.value;
 
-        if (identity?.reauthorization_required) {
+        if (v.is(SignInSchema, identity) && identity.reauthorization_required) {
           return {
             ...refuse(
               'create',
@@ -1188,13 +1074,9 @@ export async function createBlockwork(tab, options = {}) {
           };
         }
 
-        if (
-          Number.isInteger(identity?.post_id) &&
-          identity.post_id > 0 &&
-          identity.post_type === request.post_type
-        ) {
+        if (v.is(IdentitySchema, identity) && identity.post_type === parsed.output.post_type) {
           document = {
-            site_url: request.target.site_url,
+            site_url: parsed.output.target.site_url,
             post_id: identity.post_id,
             post_type: identity.post_type,
           };
@@ -1217,7 +1099,7 @@ export async function createBlockwork(tab, options = {}) {
         diagnostics: { stage: 'new_editor', waited_ms: 10000 },
       };
     } catch (error) {
-      const failed = {
+      const failed: JsonObject = {
         ...refuse(
           'create',
           'create_browser_failed',
@@ -1231,7 +1113,7 @@ export async function createBlockwork(tab, options = {}) {
         failed.document = document;
       }
 
-      return withDebug(failed, error);
+      return debugResult(failed, error);
     } finally {
       held = false;
     }
@@ -1239,7 +1121,7 @@ export async function createBlockwork(tab, options = {}) {
 
   let saveWaits = 0;
   let signInWaits = 0;
-  const caller = {
+  const caller: BlockworkCaller = {
     build,
     get receipt_path() {
       return receiptPath;
@@ -1267,7 +1149,7 @@ export async function createBlockwork(tab, options = {}) {
 
       const request = json(input);
 
-      if (!request || !validWidth(request.width) || !validMeasure(request)) {
+      if (!request || !v.is(HostMeasureSchema, request)) {
         return refuse(
           'measure',
           'invalid_measure',
@@ -1292,17 +1174,9 @@ export async function createBlockwork(tab, options = {}) {
     // positions, and the size of Blockwork's own tab, are restored before this
     // returns.
     async view(request = {}) {
-      const { client_id, widths = ['desktop'] } = request ?? {};
+      const parsed = v.safeParse(HostViewSchema, request ?? {});
 
-      if (
-        !clientId(client_id) ||
-        Object.keys(request ?? {}).some((key) => !['client_id', 'widths'].includes(key)) ||
-        !Array.isArray(widths) ||
-        !widths.length ||
-        widths.length > 6 ||
-        new Set(widths).size !== widths.length ||
-        !widths.every(validWidth)
-      ) {
+      if (!parsed.success) {
         return refuse(
           'view',
           'invalid_view',
@@ -1310,6 +1184,8 @@ export async function createBlockwork(tab, options = {}) {
           'view takes client_id, a live client ID from read or edit, and widths, a list of one to six distinct values from desktop, tablet, mobile, or whole numbers of CSS pixels from 320 to 2560.',
         );
       }
+
+      const { client_id, widths } = parsed.output;
 
       if (!target) {
         return editor('view');
@@ -1324,14 +1200,14 @@ export async function createBlockwork(tab, options = {}) {
         );
       }
 
-      const shots = [];
-      const incomplete = [];
+      const shots: VisualShot[] = [];
+      const incomplete: Width[] = [];
       const capture = async () => {
         for (const width of widths) {
           let offset = 0;
 
           for (let slice = 0; slice < 4; slice++) {
-            const placed = await sized({ operation: 'view', client_id, width, offset });
+            const placed = await sized<Placed>({ operation: 'view', client_id, width, offset });
 
             if (!placed.ok) {
               return placed;
@@ -1396,9 +1272,11 @@ export async function createBlockwork(tab, options = {}) {
     // notices are hidden for the shots and put back afterward.
     async capture_page(request = {}) {
       const normalized = json(request ?? {});
-      const issue = captureIssue(normalized);
+      const parsed = v.safeParse(CaptureSchema, normalized);
 
-      if (issue) {
+      if (!parsed.success) {
+        const issue = requestIssue(parsed.issues[0]);
+
         return {
           ...refuse(
             'capture_page',
@@ -1423,7 +1301,7 @@ export async function createBlockwork(tab, options = {}) {
         states,
         measure,
         keep_notices: keepNotices,
-      } = normalized;
+      } = parsed.output;
 
       if (busy || held) {
         return refuse(
@@ -1444,9 +1322,9 @@ export async function createBlockwork(tab, options = {}) {
       }
 
       held = true;
-      const shots = [];
-      let result;
-      let stateNode;
+      const shots: VisualShot[] = [];
+      let result: HostFailure | VisualResult | undefined;
+      let stateNode: number | undefined;
       let noticesTouched = false;
 
       try {
@@ -1454,7 +1332,7 @@ export async function createBlockwork(tab, options = {}) {
           try {
             await tab.goto(url);
           } catch (error) {
-            return withDebug(
+            return debugResult(
               refuse(
                 'capture_page',
                 'navigation_failed',
@@ -1468,10 +1346,13 @@ export async function createBlockwork(tab, options = {}) {
 
         if (states) {
           try {
-            const checked = await capability.send('Runtime.evaluate', {
-              expression: `(() => { try { return !!document.querySelector(${JSON.stringify(states.selector)}); } catch { return null; } })()`,
-              returnByValue: true,
-            });
+            const checked = v.parse(
+              EvaluationSchema,
+              await capability.send('Runtime.evaluate', {
+                expression: `(() => { try { return !!document.querySelector(${JSON.stringify(states.selector)}); } catch { return null; } })()`,
+                returnByValue: true,
+              }),
+            );
             const found = checked?.result?.value;
 
             if (found === null || found === false) {
@@ -1493,11 +1374,17 @@ export async function createBlockwork(tab, options = {}) {
             }
 
             await capability.send('DOM.enable', {});
-            const document = await capability.send('DOM.getDocument', {});
-            const match = await capability.send('DOM.querySelector', {
-              nodeId: document.root.nodeId,
-              selector: states.selector,
-            });
+            const document = v.parse(
+              DomDocumentSchema,
+              await capability.send('DOM.getDocument', {}),
+            );
+            const match = v.parse(
+              DomMatchSchema,
+              await capability.send('DOM.querySelector', {
+                nodeId: document.root.nodeId,
+                selector: states.selector,
+              }),
+            );
 
             if (!match.nodeId) {
               return {
@@ -1518,7 +1405,7 @@ export async function createBlockwork(tab, options = {}) {
               forcedPseudoClasses: states.pseudo,
             });
           } catch (error) {
-            result = withDebug(
+            result = debugResult(
               refuse(
                 'capture_page',
                 'pseudo_state_failed',
@@ -1533,7 +1420,7 @@ export async function createBlockwork(tab, options = {}) {
         result ??= await startResizing('capture_page');
 
         for (const width of result ? [] : widths) {
-          const pixels = pageWidths[width] ?? width;
+          const pixels = typeof width === 'number' ? width : pageWidths[width];
           result = await emulate('capture_page', pixels, pageHeight(pixels));
 
           if (result) {
@@ -1548,7 +1435,11 @@ export async function createBlockwork(tab, options = {}) {
           }
 
           if (!shown.ok) {
-            result = { ...shown, diagnostics: { ...shown.diagnostics, width } };
+            const diagnostics = v.parse(
+              v.optional(v.record(v.string(), v.unknown()), {}),
+              shown.diagnostics,
+            );
+            result = { ...shown, diagnostics: { ...diagnostics, width } };
             break;
           }
 
@@ -1592,7 +1483,7 @@ export async function createBlockwork(tab, options = {}) {
               forcedPseudoClasses: [],
             });
           } catch (error) {
-            const failure = withDebug(
+            const failure = debugResult(
               refuse(
                 'capture_page',
                 'pseudo_state_clear_failed',
@@ -1659,8 +1550,10 @@ export async function createBlockwork(tab, options = {}) {
       const check = () =>
         call({ operation: 'discover', target: { site_url: site.site_url } }, false, until + 5000);
       // A lost browser binding fails like a navigation does, but never recovers.
-      const waiting = (result) =>
-        !result.ok && pending.includes(result.error) && result.next !== 'rebind_browser';
+      const waiting = (result: JsonObject) =>
+        !result.ok &&
+        pending.some((error) => error === result.error) &&
+        result.next !== 'rebind_browser';
       let result = await check();
 
       while (waiting(result) && Date.now() < until) {
@@ -1745,7 +1638,11 @@ export async function createBlockwork(tab, options = {}) {
         return call({ ...request, target });
       }
 
-      if (target && !request?.target && siteOperations.includes(request?.operation)) {
+      if (
+        target &&
+        !request?.target &&
+        siteOperations.some((operation) => operation === request?.operation)
+      ) {
         const { site_url, user_id } = target;
 
         return call({ ...request, target: { site_url, user_id } });
@@ -1755,7 +1652,10 @@ export async function createBlockwork(tab, options = {}) {
     },
   };
   mediaCallers.set(caller, {
-    call: (request, deadline) => call(request, true, deadline),
+    call: async (request, deadline) => {
+      // SAFETY: Media operations return the resource engine's record and receipt fields.
+      return (await call(request, true, deadline)) as MediaResult;
+    },
     busy: () => held || busy,
     verified: new Set(),
     acquire() {
@@ -1776,10 +1676,17 @@ export async function createBlockwork(tab, options = {}) {
 }
 
 // A prior receipt vetoes another upload even before the server inserts its slug.
-async function copyMedia(caller, input, directory, withDebug) {
-  const issue = mediaCopyIssue(input);
+async function copyMedia(
+  caller: BlockworkCaller,
+  input: unknown,
+  directory: string,
+  withDebug: typeof Invocation.withDebug,
+): Promise<JsonObject> {
+  const parsed = v.safeParse(CopySchema, input);
 
-  if (issue) {
+  if (!parsed.success) {
+    const issue = requestIssue(parsed.issues[0], true);
+
     return {
       ok: false,
       operation: 'copy_media',
@@ -1791,32 +1698,37 @@ async function copyMedia(caller, input, directory, withDebug) {
     };
   }
 
+  const request = parsed.output;
   const started = Date.now();
-  const deadline = started + (input.deadline_ms ?? 55000) - 2000;
+  const deadline = started + (request.deadline_ms ?? 55000) - 2000;
   const ready = () => deadline - Date.now() >= 3000;
   const key = createHash('sha256')
     .update(
       JSON.stringify([
-        input.copy_id,
-        input.source_target.site_url,
-        input.source_target.user_id,
-        input.target.site_url,
-        input.target.user_id,
-        input.parent_id ?? 0,
+        request.copy_id,
+        request.source_target.site_url,
+        request.source_target.user_id,
+        request.target.site_url,
+        request.target.user_id,
+        request.parent_id ?? 0,
       ]),
     )
     .digest('hex')
     .slice(0, 16);
-  const destination = mediaCallers.get(caller);
-  const origin = mediaCallers.get(input.source);
+  const destination = mediaCallers.get(caller)!;
+  const origin = mediaCallers.get(request.source)!;
   const accesses = [...new Set([destination, origin])];
-  const items = input.ids.map((source_id) => ({ source_id, state: 'pending', timings: {} }));
-  const media_map = { ids: {}, urls: {} };
-  const timings = {};
-  const summary = (failure, waiting = false) => {
-    const remaining = items
-      .filter((entry) => !['verified', 'upload_bytes_different'].includes(entry.state))
-      .map((entry) => entry.source_id);
+  const items: CopyItem[] = request.ids.map((source_id) => ({
+    source_id,
+    state: 'pending',
+    timings: {},
+  }));
+  const media_map: MediaMap = { ids: {}, urls: {} };
+  const timings: Record<string, number> = {};
+  const summary = (failure?: JsonObject, waiting = false) => {
+    const remaining = items.flatMap((entry) =>
+      ['verified', 'upload_bytes_different'].includes(entry.state) ? [] : [entry.source_id],
+    );
     let persistence = remaining.length ? 'not_attempted' : 'verified';
 
     if (Object.keys(media_map.ids).length && remaining.length) {
@@ -1833,7 +1745,7 @@ async function copyMedia(caller, input, directory, withDebug) {
     return {
       ok: !failure,
       operation: 'copy_media',
-      copy_id: input.copy_id,
+      copy_id: request.copy_id,
       complete: !remaining.length,
       persistence,
       media_map,
@@ -1858,10 +1770,14 @@ async function copyMedia(caller, input, directory, withDebug) {
   }
 
   let stage = 'resource_status';
-  let item;
+  let item: CopyItem | undefined;
   const siteCall =
-    (access, target) =>
-    async (operation, fields = {}, label = operation) => {
+    (access: MediaAccess, target: CopyRequest['target']) =>
+    async <T extends MediaResult = MediaResult>(
+      operation: string,
+      fields: JsonObject = {},
+      label = operation,
+    ): Promise<T> => {
       stage = label;
       const before = Date.now();
       const result = await access.call({ ...fields, operation, target }, deadline);
@@ -1879,7 +1795,7 @@ async function copyMedia(caller, input, directory, withDebug) {
       }
 
       if (!result.ok && !(label === 'verify' && result.error === 'upload_bytes_different')) {
-        if (label === 'save' && result.operation_started === false) {
+        if (item && label === 'save' && result.operation_started === false) {
           item.state = 'prepared';
         }
 
@@ -1894,14 +1810,15 @@ async function copyMedia(caller, input, directory, withDebug) {
         );
       }
 
-      return result;
+      // SAFETY: Each call selects the resource operation whose fields it consumes.
+      return result as T;
     };
 
-  const to = siteCall(destination, input.target);
-  const from = siteCall(origin, input.source_target);
+  const to = siteCall(destination, request.target);
+  const from = siteCall(origin, request.source_target);
 
   try {
-    const statuses = new Map();
+    const statuses = new Map<MediaAccess, MediaResult>();
 
     for (const access of accesses) {
       const status = await (access === destination ? to : from)('resource_status');
@@ -1914,7 +1831,7 @@ async function copyMedia(caller, input, directory, withDebug) {
     }
 
     stage = 'receipts';
-    const receipts = new Map();
+    const receipts = new Map<string, ResourceReceipt>();
 
     for (const name of await readdir(directory)) {
       if (!ready()) {
@@ -1925,38 +1842,37 @@ async function copyMedia(caller, input, directory, withDebug) {
         continue;
       }
 
-      const receipt = JSON.parse(await readFile(join(directory, name), 'utf8'));
+      const receipt: ResourceReceipt = JSON.parse(await readFile(join(directory, name), 'utf8'));
+      const desiredSlug = receipt.desired?.slug;
 
       if (
         receipt.kind !== 'media' ||
         receipt.action !== 'create' ||
-        receipt.target?.site_url !== input.target.site_url ||
-        receipt.target?.user_id !== input.target.user_id ||
-        !receipt.desired?.slug?.startsWith(`bw-${key}-`)
+        receipt.target?.site_url !== request.target.site_url ||
+        receipt.target?.user_id !== request.target.user_id ||
+        !v.is(v.string(), desiredSlug) ||
+        !desiredSlug.startsWith(`bw-${key}-`)
       ) {
         continue;
       }
 
-      if (
-        receipts.has(receipt.desired.slug) &&
-        receipts.get(receipt.desired.slug).key !== receipt.key
-      ) {
+      if (receipts.has(desiredSlug) && receipts.get(desiredSlug)?.key !== receipt.key) {
         throw new MediaCopyError(
           'media_copy_receipts_ambiguous',
           'Different receipts share this copy slug. Inspect and verify those receipts; do not upload again or change copy_id.',
         );
       }
 
-      receipts.set(receipt.desired.slug, receipt);
+      receipts.set(desiredSlug, receipt);
     }
 
     if (!ready()) {
       return summary();
     }
 
-    const found = await to(
+    const found = await to<InspectedMedia>(
       'inspect_media',
-      { slugs: input.ids.map((id) => `bw-${key}-${id}`) },
+      { slugs: request.ids.map((id) => `bw-${key}-${id}`) },
       'lookup',
     );
 
@@ -1964,7 +1880,7 @@ async function copyMedia(caller, input, directory, withDebug) {
       return summary();
     }
 
-    const inspected = await from('inspect_media', { ids: input.ids }, 'inspect');
+    const inspected = await from<InspectedMedia>('inspect_media', { ids: request.ids }, 'inspect');
     const sources = new Map(inspected.records.map((record) => [record.id, record]));
 
     for (item of items) {
@@ -1982,9 +1898,9 @@ async function copyMedia(caller, input, directory, withDebug) {
         );
       }
 
-      let record = matches[0];
+      let record: MediaRecord | undefined = matches[0];
       let receipt = receipts.get(slug);
-      const native = statuses.get(destination);
+      const native = statuses.get(destination)!;
       const owned = receipt && native.receipt?.key === receipt.key;
       item.receipt = receipt;
 
@@ -2000,7 +1916,7 @@ async function copyMedia(caller, input, directory, withDebug) {
             break;
           }
 
-          const verified = await to(
+          const verified = await to<StoredMedia>(
             'verify_resource',
             { receipt, resource_id: owned ? native.resource_id : record?.id },
             'verify',
@@ -2049,7 +1965,7 @@ async function copyMedia(caller, input, directory, withDebug) {
                   alt: source.alt_text,
                   caption: source.caption.raw,
                   description: source.description.raw,
-                  parent_id: input.parent_id ?? 0,
+                  parent_id: request.parent_id ?? 0,
                 },
               },
               'prepare',
@@ -2064,7 +1980,7 @@ async function copyMedia(caller, input, directory, withDebug) {
         }
 
         item.state = 'attempted';
-        record = (await to('save_resource', { receipt }, 'save')).record;
+        record = (await to<StoredMedia>('save_resource', { receipt }, 'save')).record;
       }
 
       if (record.slug !== slug) {
@@ -2080,10 +1996,7 @@ async function copyMedia(caller, input, directory, withDebug) {
         urls[size.source_url] = record.media_details.sizes?.[name]?.source_url ?? record.source_url;
       }
 
-      if (
-        Object.keys({ ...media_map.urls, ...urls }).length > 2000 ||
-        Object.entries(urls).some(([from, to]) => !mediaCopyUrl(from) || !mediaCopyUrl(to))
-      ) {
+      if (!v.is(CopyUrlEntriesSchema, Object.entries({ ...media_map.urls, ...urls }))) {
         throw new MediaCopyError(
           'media_copy_map_limit',
           'The map requires at most 2000 absolute http or https URLs of at most 2048 characters. Keep receipts and split IDs into smaller requests with the same copy_id; existing copies will be read.',
@@ -2113,7 +2026,7 @@ async function copyMedia(caller, input, directory, withDebug) {
   } catch (error) {
     const native = error instanceof MediaCopyError ? error.result : undefined;
 
-    if (['browser_operation_pending', 'operation_in_progress'].includes(native?.error)) {
+    if (['browser_operation_pending', 'operation_in_progress'].includes(native?.error ?? '')) {
       const waiting = summary(undefined, true);
 
       // A pending source download is a read; it leaves upload persistence as it was.
@@ -2124,7 +2037,7 @@ async function copyMedia(caller, input, directory, withDebug) {
       return waiting;
     }
 
-    const failure = {
+    const failure: JsonObject = {
       error: error instanceof MediaCopyError ? error.code : 'media_copy_interrupted',
       hint:
         error instanceof MediaCopyError
@@ -2150,108 +2063,26 @@ async function copyMedia(caller, input, directory, withDebug) {
   }
 }
 
-function mediaCopyIssue(input) {
-  const record = (value) => Object.prototype.toString.call(value) === '[object Object]';
-  const text = (value) =>
-    Object.prototype.toString.call(value) === '[object String]' && value === value.valueOf();
-  const positive = (value) => Number.isSafeInteger(value) && value > 0;
-  const site = (value) =>
-    record(value) &&
-    Object.keys(value).sort().join() === 'site_url,user_id' &&
-    positive(value.user_id) &&
-    mediaCopyUrl(value.site_url) &&
-    !new URL(value.site_url).username &&
-    !new URL(value.site_url).password;
-
-  if (
-    !record(input) ||
-    Object.keys(input).some(
-      (key) =>
-        ![
-          'source',
-          'source_target',
-          'target',
-          'ids',
-          'copy_id',
-          'deadline_ms',
-          'parent_id',
-        ].includes(key),
-    )
-  ) {
-    return {
-      path: '',
-      expected:
-        'source, source_target, target, ids, copy_id, and optional deadline_ms and parent_id only',
-    };
-  }
-
-  const rules = [
-    ['source', mediaCallers.has(input.source), 'a caller from this bootstrap module'],
-    [
-      'source_target',
-      site(input.source_target),
-      'an exact http or https site_url and positive user_id',
-    ],
-    ['target', site(input.target), 'an exact http or https site_url and positive user_id'],
-    [
-      'ids',
-      Array.isArray(input.ids) &&
-        input.ids.length >= 1 &&
-        input.ids.length <= 50 &&
-        Array.from(input.ids).every(positive) &&
-        new Set(input.ids).size === input.ids.length,
-      '1 to 50 distinct positive attachment IDs',
-    ],
-    [
-      'copy_id',
-      text(input.copy_id) && /^[a-z0-9][a-z0-9_-]{0,79}$/.test(input.copy_id),
-      '1 to 80 lowercase letters, digits, underscores, or hyphens, starting with a letter or digit',
-    ],
-    [
-      'deadline_ms',
-      input.deadline_ms === undefined ||
-        (Number.isInteger(input.deadline_ms) &&
-          input.deadline_ms >= 45000 &&
-          input.deadline_ms <= 55000),
-      'an integer from 45000 to 55000 milliseconds',
-    ],
-    [
-      'parent_id',
-      input.parent_id === undefined ||
-        (Number.isSafeInteger(input.parent_id) && input.parent_id >= 0),
-      'a nonnegative target post ID',
-    ],
-  ];
-  const failed = rules.find(([, valid]) => !valid);
-
-  return failed ? { path: failed[0], expected: failed[2] } : undefined;
-}
-
-function mediaCopyUrl(value) {
-  return (
-    Object.prototype.toString.call(value) === '[object String]' &&
-    value === value.valueOf() &&
-    value.length <= 2048 &&
-    URL.canParse(value) &&
-    ['http:', 'https:'].includes(new URL(value).protocol)
-  );
-}
-
 class MediaCopyError extends Error {
-  constructor(code, hint, options) {
+  readonly result: MediaResult | undefined;
+
+  constructor(
+    readonly code: string,
+    readonly hint: string,
+    options?: ErrorOptions & { result: MediaResult },
+  ) {
     super(code, options);
-    this.code = code;
-    this.hint = hint;
     this.result = options?.result;
   }
 }
 
 // The pixel size of a PNG or JPEG screenshot: undefined for another format,
 // null for a PNG or JPEG without a readable size. Blockwork requests JPEG.
-function imageSize(image) {
+function imageSize(image: Uint8Array | ArrayBuffer): Size | null | undefined {
   const bytes = image instanceof Uint8Array ? image : new Uint8Array(image);
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const size = (width, height) => (width > 0 && height > 0 ? { width, height } : null);
+  const size = (width: number, height: number) =>
+    width > 0 && height > 0 ? { width, height } : null;
 
   if (bytes.length >= 4 && data.getUint32(0) === 0x89504e47) {
     return bytes.length >= 24 ? size(data.getUint32(16), data.getUint32(20)) : null;
@@ -2284,10 +2115,31 @@ function imageSize(image) {
 
 // A typical viewport height for a front-end width, since vh units size page
 // sections such as heroes: a phone, a portrait tablet, or a desktop.
-function pageHeight(width) {
+function pageHeight(width: number) {
   if (width < 600) {
     return 844;
   }
 
   return width < 1024 ? 1024 : 1080;
+}
+
+interface CopyItem extends JsonObject {
+  source_id: number;
+  state: string;
+  timings: Record<string, number>;
+  receipt?: ResourceReceipt;
+  resource_id?: number;
+  result?: JsonObject;
+}
+
+interface HostBuild extends JsonObject {
+  version: string;
+  engine_sha256: string;
+  invoker_sha256: string;
+  bootstrap_sha256: string;
+  debug?: boolean;
+}
+
+interface SizedRequest extends JsonObject {
+  operation: string;
 }

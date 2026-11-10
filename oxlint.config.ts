@@ -19,6 +19,7 @@ export default defineConfig({
     'dist/**',
     'skills/blockwork/scripts/editor.js',
     'skills/blockwork/scripts/invoke.mjs',
+    'skills/blockwork/scripts/bootstrap.mjs',
   ],
   jsPlugins: [
     { name: 'anti-slop', specifier: './tools/oxlint/anti-slop/index.ts' },
@@ -47,7 +48,7 @@ export default defineConfig({
   },
   overrides: [
     {
-      files: ['src/**/*.ts', 'src/bootstrap.mjs', 'tools/oxlint/readability.ts', 'tools/*.mjs'],
+      files: ['src/**/*.ts', 'tools/oxlint/readability.ts', 'tools/*.mjs'],
       rules: {
         curly: ['error', 'all'],
         eqeqeq: ['error', 'always'],

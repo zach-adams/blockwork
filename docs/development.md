@@ -53,8 +53,8 @@ runs from `pnpm check` or CI. See [real-editor tests](editing-tests.md) and
 
 `skills/blockwork/scripts/` is generated and ignored by Git. It holds the compiled
 `editor.js`, the compiled `invoke.mjs` host helper for bounded Promise-handle calls,
-and a copy of `src/bootstrap.mjs`. Run `pnpm compile` to refresh them for local
-prototype use.
+and `bootstrap.mjs` bundled from `src/bootstrap.ts`. Run `pnpm compile` to refresh
+them for local prototype use.
 
 `tools/patches/` holds the pnpm dependency patches, so pass
 `--patches-dir tools/patches` to `pnpm patch-commit`.
