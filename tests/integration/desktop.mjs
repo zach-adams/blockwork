@@ -191,7 +191,7 @@ export async function createDesktopSuite(cua, descriptor, sourcePath, artifactDi
     return result;
   }
 
-  // The bootstrap stores this receipt before the second call; record it the same way.
+  // The bootstrap keeps this receipt before the second call; record it the same way.
   async function save(session, request = {}) {
     const prepared = await operation(session, {
       operation: 'prepare_save',
