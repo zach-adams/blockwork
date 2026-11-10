@@ -1,29 +1,23 @@
 import * as v from 'valibot';
-import { abilityOperation } from './abilities';
+import { AbilityRequestSchema, abilityOperation } from './abilities';
 import type { AbilityRequest } from './abilities';
-import { resourceOperation } from './resources';
+import { ResourceRequestSchema, resourceOperation } from './resources';
 import type { Connection, Request } from './contracts';
 import { JsonObjectSchema, editorOperations, readOnlyOperations } from './contracts';
 import type { ResourceRequest } from './resources';
-import { sharedOperation } from './shared';
+import { SharedRequestSchema, sharedOperation } from './shared';
 import type { SharedRequest } from './shared';
 import { errorHint } from './errors';
 import { editorOperation } from './session';
 import { startOperation } from './timing';
 
-const resourceOperations = [
-  'resource_status',
-  'discover',
-  'inspect_media',
-  'download_media',
-  'inspect_terms',
-  'prepare_media',
-  'prepare_term',
-  'save_resource',
-  'verify_resource',
+// The request schemas already name each operation, so read the names from them.
+const knownOperations: readonly string[] = [
+  ...editorOperations,
+  ...[ResourceRequestSchema, SharedRequestSchema, AbilityRequestSchema].flatMap((schema) =>
+    schema.options.map((option) => option.entries.operation.literal),
+  ),
 ];
-const sharedOperations = ['list_entities', 'inspect_entity', 'recover'];
-const abilityOperations = ['inspect_abilities', 'run_ability'];
 
 type AnyRequest = Request | ResourceRequest | SharedRequest | AbilityRequest | Connection;
 
@@ -62,13 +56,9 @@ export async function blockwork(request: AnyRequest) {
     return result;
   }
 
-  const known = [
-    ...editorOperations,
-    ...resourceOperations,
-    ...sharedOperations,
-    ...abilityOperations,
-  ];
-  const operation = known.includes(request?.operation) ? String(request.operation) : 'unknown';
+  const operation = knownOperations.includes(request?.operation)
+    ? String(request.operation)
+    : 'unknown';
   let code =
     'error' in result && v.is(v.string(), result.error) ? result.error : 'operation_failed';
 
