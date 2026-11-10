@@ -1,14 +1,14 @@
 name: Check
 
 # Root Markdown and docs/ change nothing the jobs check. Packaged skill docs
-# under skills/ still start a run. Tags start only the Release workflow; the
-# tagged commit was already checked on main.
+# under skills/ still start a run. The Release workflow calls this one for a tag.
 on:
   push:
     branches: ['**']
     paths-ignore: ['*.md', 'docs/**']
   pull_request:
     paths-ignore: ['*.md', 'docs/**']
+  workflow_call:
   workflow_dispatch:
 
 permissions:

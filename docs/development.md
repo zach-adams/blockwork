@@ -84,16 +84,18 @@ files. Packaging does not install, upload, or publish the plugin.
 ### Releases
 
 To publish a version, set the same version in `plugin.json` and `package.json`,
-release it to `main`, then push a matching tag:
+release it to `main`, then push a matching annotated tag. Its message becomes the
+release notes, so write what changed for users:
 
 ```sh
-git tag v0.1.2 main
+git tag -a v0.1.2 main
 git push origin v0.1.2
 ```
 
-The Release workflow checks that the tag matches both files, runs `pnpm build`,
-and publishes a GitHub release with the release package,
-`blockwork-<version>.tar.gz`, and a link to the changes since the previous tag.
+The Release workflow runs the whole Check workflow on the tagged commit. It then
+checks that the tag is annotated, points at a commit on `main`, and matches both
+files, and publishes a GitHub release with the release package,
+`blockwork-<version>.tar.gz`.
 
 ## Local desktop plugin
 

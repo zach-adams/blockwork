@@ -1,6 +1,7 @@
 name: Release
 
-# Pushing a version tag, such as v0.1.2, publishes that version.
+# Pushing an annotated version tag, such as v0.1.2, publishes that version with the
+# tag's message as its release notes.
 on:
   push:
     tags: ['v*']
@@ -9,23 +10,43 @@ permissions:
   contents: write
 
 jobs:
+  # The full Check workflow runs on the tagged commit, so a release never depends on
+  # an earlier run that may have been skipped or failed.
+  check:
+    uses: ./.github/workflows/check.yml
+    permissions:
+      contents: read
+
   release:
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v7
         with:
           node-version: 24
       - uses: pnpm/action-setup@v6
       - run: pnpm install --frozen-lockfile
-      - name: Check the tag matches the version
+      # Checkout stores the tag without its message, so fetch it again for the notes.
+      - name: Check the tag is on main and matches the version
         run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME must point at a commit on main. Release to main first, then tag."
+            exit 1
+          fi
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]; then
+            echo "::error::Tag $GITHUB_REF_NAME has no message. Delete it and create an annotated tag with git tag -a."
+            exit 1
+          fi
           version=$(node -p "require('./plugin.json').version")
           if [ "$GITHUB_REF_NAME" != "v$version" ] || [ "$(node -p "require('./package.json').version")" != "$version" ]; then
             echo "::error::Tag $GITHUB_REF_NAME must be v<version>, with the same version in plugin.json and package.json."
             exit 1
           fi
-      - run: pnpm build
-      - run: gh release create "$GITHUB_REF_NAME" "dist/blockwork-${GITHUB_REF_NAME#v}.tar.gz" --verify-tag --generate-notes
+      - run: pnpm package
+      - run: gh release create "$GITHUB_REF_NAME" "dist/blockwork-${GITHUB_REF_NAME#v}.tar.gz" --verify-tag --notes-from-tag
         env:
           GH_TOKEN: ${{ github.token }}
