@@ -18,7 +18,7 @@
       "interface": {
         "displayName": "Blockwork",
         "shortDescription": "Native Gutenberg editing",
-        "longDescription": "A desktop plugin for active Gutenberg drafts and background document editing. Uses native block registrations, permissions, editor locks, prepared receipts, and separate editor and persistence verification. Active-editor requests preserve pending work and leave the tab open. Publication changes require an explicit request. Includes settings, shared entities, media, and taxonomy operations.",
+        "longDescription": "Ask the agent to edit pages and posts on your WordPress site in plain language. Blockwork makes each change in the block editor inside the app's browser, using WordPress's own editing code, so pages come out as if a person had made them and you can keep editing them by hand. It edits a page you have open and leaves the changes for you to review, or opens one in the background and saves it. It also changes post settings, media, categories, and tags, and it keeps a page's status unless you ask to change it.",
         "developerName": "Zach Adams",
         "category": "Productivity",
         "defaultPrompt": "Use Blockwork to inspect the block editor for a page on my WordPress site."
