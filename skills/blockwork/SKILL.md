@@ -39,9 +39,11 @@ at REPL top level. If the host tool, CDP capability, or package-file access is
 missing, report the gap and stop. Never attach external CDP, install a local
 browser, or evaluate the engine through CDP yourself.
 
-Use `connect`, `view`, `measure`, and `capture_page` for evidence. Never call
-`getAXState`, `getAXStateAndScreenshot`, `getScreenshot`, or `domSnapshot` on
-Blockwork tabs. Preserve browser visibility except for a recovery handoff.
+Host output fills context fast. Blockwork never needs a tab's accessibility
+tree, DOM snapshot, or host screenshot, so never call `getAXState`,
+`getAXStateAndScreenshot`, `getScreenshot`, `domSnapshot`, or `cua.getTab` on its
+tabs; `connect`, `view`, `measure`, and `capture_page` report what you need.
+Preserve browser visibility except for a recovery handoff.
 Only the user signs in. For a login page or `reauthorization_required`, read
 [sign-in recovery](references/recovery.md#sign-in) and wait with
 `wait_for_sign_in`. Never create a session, cookie, or login link for them
@@ -163,13 +165,40 @@ Iterate in the editor; never save just to inspect appearance.
 
 ## Failures
 
-Check `ok` and follow `hint` and `next`. Read [recovery](references/recovery.md)
-when they do not settle the next step. Never repeat a change whose outcome is
-unconfirmed. For `status_required` or a host failure on a change, call `status()`
-until `busy` is false and read `last_request` before doing anything else.
-Keep an uncertain save's receipt and reconcile with `recover`; never replay it.
-For a lost browser binding, REPL reset, interrupted turn, or context summary,
-read [caller recovery](references/invocation.md#interrupted-turns-and-context-summaries).
+Check `ok`. Every failure has `error`, a `hint`, and `next`. Follow `next`.
+
+- `next: "retry"`: a read-only call got no result. Wait a few seconds, then call
+  it again; never run the engine through CDP yourself.
+- `next: "rebind_browser"`: this caller's browser binding is gone. Follow the
+  hint's steps, also in [recovery](references/recovery.md#host-failures), to
+  bind the same tab and create the caller again. Call `status()` before any
+  change.
+- `browser_access_denied`: the browser refused page access for this site and
+  nothing started. Tell the user what the hint says; retrying cannot help.
+- `initial_serialization_changed`: the page has older stored markup and nothing was
+  applied. Open the editor with Save ready, wait for the user to click Save, and
+  finish the request in that tab, as
+  [recovery](references/recovery.md#older-stored-markup) shows.
+- `permission_denied`: the signed-in account lacks a WordPress capability for
+  this change. Tell the user; signing in again cannot help.
+- `save_not_sent`: a plugin's check, such as an empty required ACF field, stopped
+  the save and nothing was written. Follow the hint to have the user fill it.
+- `block_changed`: someone else changed a block the edit depends on. Read the
+  listed blocks, then send the edit again only if it still applies.
+- `editor_result: "rolled_back"`: nothing changed; correct the request.
+  `"partial"`: read the changed blocks before doing anything else.
+- `saved_record_changed`: the saved document differs from what this editor
+  loaded, in the fields `diagnostics.fields` names. Tell the user; never
+  reconnect or reload to get past it.
+- `status_required` or a host failure on a change: call `status()` until `busy`
+  is false and read `last_request`; its `error` says why a change failed. Never
+  repeat a change whose outcome you have not confirmed.
+- An uncertain save keeps its receipt. Reconcile it with `recover` as described
+  in [recovery](references/recovery.md#uncertain-saves).
+- `next: "report_uncertain_do_not_replay"`: a plugin ability may have changed
+  the site and nothing can check it. Tell the user; never run it again.
+- After a REPL reset, an interrupted turn, or a context summary, read
+  [caller recovery](references/invocation.md#interrupted-turns-and-context-summaries).
 
 ## Report the result
 
