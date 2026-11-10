@@ -76,7 +76,7 @@ behavior only from that package. `tools/package.mjs --development` makes the
 local install's package, named `blockwork-<version>-development.tar.gz`. Edit
 the TypeScript in `src/`, not the generated scripts.
 
-The build creates `dist/blockwork/` and `dist/blockwork-0.1.1.tar.gz` with an
+The build creates `dist/blockwork/` and `dist/blockwork-0.1.2.tar.gz` with an
 explicit file allowlist. It bundles the scripts itself, so the package's mode
 never depends on an earlier compile.
 It excludes test configuration, screenshots, receipts, Git data, and developer

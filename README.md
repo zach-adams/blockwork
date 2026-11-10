@@ -10,7 +10,7 @@ in that editor, inside the app's built-in browser, using WordPress's own editing
 code. Its pages come out the same as if a person had made them, so you can keep
 editing them by hand.
 
-Blockwork is an early prototype, version 0.1.1, so expect gaps and rough edges.
+Blockwork is an early prototype, version 0.1.2, so expect gaps and rough edges.
 
 ![A chat in the desktop app asks Blockwork to restyle a landing page's hero, then
 add a photo background, then make it taller on phones. The editor beside the chat
