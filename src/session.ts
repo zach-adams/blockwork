@@ -1700,15 +1700,194 @@ function changedBlocks(before: Map<string, Observed>, rows: BlockSummary[]) {
   });
 }
 
-async function edit(context: Context, input: EditInput): Promise<JsonObject> {
-  const { wp, session, editor, actions } = context;
-  context.available();
-  noteForeignChanges(context);
+async function prepareFootnoteSettings(
+  context: Context,
+  input: EditInput,
+  plan: Plan,
+  liveFields: JsonObject,
+  beforeRows: BlockSummary[],
+) {
+  const { wp, session } = context;
+  const meta = v.parse(JsonObjectSchema, liveFields.meta);
+  assert(meta.footnotes === undefined || typeof meta.footnotes === 'string', 'meta_unavailable');
+  const declared = input.settings?.meta?.footnotes;
+  assert(declared === undefined || typeof declared === 'string', 'unsupported_field_value', {
+    field: 'settings.meta.footnotes',
+    next_step: 'Supply the complete final Footnote body list as a JSON string.',
+  });
+  const prepared = await prepareStructuralFootnotePlan(
+    wp,
+    plan,
+    meta.footnotes ?? '',
+    declared,
+    session.observed,
+  );
+  const footnoteWrites = { ...prepared.footnote_writes, requested_edits: input.edits.length };
+  const footnotePermission = prepared.permission;
+  const post = context.livePost();
+  const currentMeta = context.fields(post, ['date_gmt']).meta;
+  // Compare the whole observed metadata immediately before deriving a settings plan.
+  assert(same(session.observed_fields.meta, currentMeta), 'field_changed', {
+    fields: ['meta'],
+    stage: 'footnote_settings',
+    next_step: 'Read the draft and complete settings before preparing another edit.',
+  });
+  const settings = await prepareSettings(
+    wp,
+    { ...input, settings: { meta: { footnotes: prepared.footnotes } } },
+    post,
+    session.schema,
+  );
+  checkConflicts(context, beforeRows, plan.touched);
 
-  if (session.workflow === 'attached' && !session.preview) {
-    refuseAmbiguousUnion(wp, context.rows());
+  return { settings, footnoteWrites, footnotePermission };
+}
+
+async function preparePairedPermissions(
+  wp: WordPress,
+  input: EditInput,
+  plan: Plan,
+  media: Awaited<ReturnType<typeof mediaEdits>>,
+  settings: SettingsPlan,
+) {
+  const galleryPermission = await prepareCompleteGallery(
+    wp,
+    plan,
+    media,
+    !input.post &&
+      !input.open_pattern_section &&
+      !input.binding_writes.length &&
+      !Object.keys(settings.values).length,
+  );
+  const tabsPermission =
+    !input.post &&
+    !input.open_pattern_section &&
+    !input.binding_writes.length &&
+    !input.media_bindings.length &&
+    !Object.keys(settings.values).length
+      ? await prepareCompleteTabs(wp, plan)
+      : undefined;
+  const contextPermission =
+    !input.post &&
+    !input.open_pattern_section &&
+    !input.binding_writes.length &&
+    !input.media_bindings.length &&
+    !Object.keys(settings.values).length
+      ? await prepareCompleteContextMove(wp, plan)
+      : undefined;
+
+  return { galleryPermission, tabsPermission, contextPermission };
+}
+
+function recordEditReferences(
+  session: Session,
+  plan: Plan,
+  settings: SettingsPlan,
+  media: Awaited<ReturnType<typeof mediaEdits>>,
+  beforeRows: BlockSummary[],
+  afterRows: BlockSummary[],
+) {
+  const requestedBefore = session.requested;
+  const referencesBefore = session.references;
+  const mediaReferencesBefore = session.media_references;
+  const sharedReferencesBefore = Object.fromEntries(
+    Object.entries(session.shared_references).map(([id, owned]) => [
+      id,
+      {
+        identity: { ...owned.identity },
+        graph: owned.graph.map((reference) => ({ ...reference })),
+      },
+    ]),
+  );
+  const patch = settingsPatch(settings);
+  session.requested = { ...session.requested, ...patch };
+
+  if (patch.meta) {
+    session.requested.meta = {
+      ...v.parse(JsonObjectSchema, requestedBefore.meta ?? {}),
+      ...v.parse(JsonObjectSchema, patch.meta),
+    };
   }
 
+  session.references = [...session.references, ...settings.references];
+  retainSharedReferences(session, plan, afterRows);
+  retainMediaReferences(session, media, beforeRows, afterRows);
+
+  return { requestedBefore, referencesBefore, mediaReferencesBefore, sharedReferencesBefore };
+}
+
+function checkAppliedEdit(
+  context: Context,
+  plan: Plan,
+  settings: SettingsPlan,
+  draft: DraftCheckpoint,
+  footnote: ReturnType<typeof footnoteCheckpoint> | undefined,
+) {
+  const { wp } = context;
+  const liveRows = context.rows();
+  const plannedRows = readTree(wp, plan.blocks);
+
+  // Mismatch diagnostics scan the whole document, so build them only on failure.
+  if (!same(blockState(liveRows), blockState(plannedRows))) {
+    throw new BlockworkError('prepared_content_changed', {
+      mismatches: blockMismatches(plannedRows, liveRows, true),
+    });
+  }
+
+  const parsed = readTree(wp, wp.blocks.parse(wp.blocks.serialize(documentBlocks(wp))));
+
+  if (!roundTripMatches(wp, liveRows, parsed)) {
+    throw new BlockworkError(
+      'serialization_mismatch',
+      serializationDiagnostics(parsed, liveRows, 'edit_round_trip', 'parsed_to_live'),
+    );
+  }
+
+  for (const [name, value] of Object.entries(settings.values)) {
+    assert(
+      same(context.fields(context.livePost(), settings.date_fields)[name], value),
+      'prepared_settings_changed',
+      { field: name },
+    );
+  }
+
+  if (!footnote) {
+    assert(same(draftState(context), draft.current), 'intervening_editor_change');
+  }
+}
+
+async function restoreFailedEdit(
+  context: Context,
+  plan: Plan,
+  settings: SettingsPlan,
+  draft: DraftCheckpoint,
+  footnote: ReturnType<typeof footnoteCheckpoint> | undefined,
+  readFields: () => JsonObject,
+): Promise<{ outcome: 'rolled_back' | 'partial'; failure?: Error }> {
+  const { wp } = context;
+
+  if (!footnote) {
+    return rollBack(context, plan, settings, draft);
+  }
+
+  try {
+    const restored = await restoreExplicitFootnotes(
+      wp,
+      context.target,
+      footnote,
+      readFields,
+      context.available,
+      () => {},
+    );
+
+    return { outcome: restored ? 'rolled_back' : 'partial', failure: undefined };
+  } catch (cause) {
+    return { outcome: 'partial', failure: new Error('The paired restore failed.', { cause }) };
+  }
+}
+
+function requestedEdits(context: Context, input: EditInput) {
+  const { wp } = context;
   const shared = sharedType(context.target.post_type);
   assert(shared ? input.scope === shared.scope : !input.scope, 'shared_scope_required');
   const requested = expandEdits(wp, input);
@@ -1741,6 +1920,11 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     requireRootFootnoteEdits(wp, requested);
   }
 
+  return { requested, explicitFootnoteInput, structuralFootnoteInput };
+}
+
+function editCheckpoint(context: Context) {
+  const { wp } = context;
   const draftBefore = draftState(context);
   const originalBlocks = copyTree(documentBlocks(wp));
   const entity = wp.data
@@ -1754,13 +1938,19 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     entity_blocks: Array.isArray(entity.blocks),
     settings_dispatched: false,
   };
-  const hasSettings =
-    input.post || input.settings || input.binding_writes.length || input.media_bindings.length;
-  let settings = hasSettings
-    ? await prepareSettings(wp, input, context.livePost(), session.schema)
-    : emptySettings(context);
-  const media = await mediaEdits(wp, input.media_bindings);
-  const edits = [...requested, ...media.edits];
+
+  return draft;
+}
+
+function checkEditDependencies(
+  context: Context,
+  edits: ReturnType<typeof expandEdits>,
+  settings: SettingsPlan,
+  liveFields: JsonObject,
+  structuralFootnoteInput: boolean,
+  explicitFootnoteInput: boolean,
+) {
+  const { session } = context;
   assert(edits.length <= 32, 'too_many_edits', { edit_count: edits.length, max_edits: 32 });
   assert(edits.length || Object.keys(settings.values).length, 'empty_edit');
   // A template change can change server-side editor policy. Save it before
@@ -1774,7 +1964,6 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
   });
   assert(!structural || !session.structure_requires_reload, 'reopen_required');
 
-  const liveFields = draftBefore.fields;
   const writtenFields = new Set(Object.keys(settings.values));
 
   if (structuralFootnoteInput) {
@@ -1794,23 +1983,19 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     return differingFields({ [name]: session.observed_fields[name] }, { [name]: liveFields[name] });
   });
   assert(!fieldConflicts.length, 'field_changed', { fields: fieldConflicts.slice(0, 20) });
+}
 
-  if (input.open_pattern_section) {
-    await openPatternSection(
-      wp,
-      context.rows(),
-      input.open_pattern_section.section_client_id,
-      context.available,
-    );
-  }
-
-  const beforeRows = context.rows();
-  const before = new Map(beforeRows.map((row) => [row.clientId, observedState(row)]));
-  const rootBefore = rootState(wp).children;
-  const stored = documentContent(wp);
-  const content = plannedContent(wp, stored);
-  const plan = await preparePlan(wp, edits, content, context.target);
-  const rewritten = content === stored ? undefined : rewrittenBlocks(wp, beforeRows, stored);
+function checkPlannedEdit(
+  context: Context,
+  input: EditInput,
+  plan: Plan,
+  beforeRows: BlockSummary[],
+  settings: SettingsPlan,
+  content: string,
+  explicitFootnoteInput: boolean,
+  structuralFootnoteInput: boolean,
+) {
+  const { wp } = context;
 
   if (explicitFootnoteInput) {
     const declared = input.settings?.meta?.footnotes;
@@ -1841,69 +2026,158 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     Object.keys(settings.values).length || wp.blocks.serialize(plan.blocks) !== content,
     'no_change',
   );
+}
+
+function retainSharedReferences(session: Session, plan: Plan, afterRows: BlockSummary[]) {
+  const sharedReferences = { ...session.shared_references };
+
+  for (const [id, owned] of Object.entries(plan.references)) {
+    if (!sharedReferences[id] || !same(sharedReferences[id].identity, owned.identity)) {
+      sharedReferences[id] = owned;
+    }
+  }
+
+  session.shared_references = Object.fromEntries(
+    Object.entries(sharedReferences).filter(([id, owned]) => {
+      const row = afterRows.find((item) => item.clientId === id);
+
+      return (
+        row &&
+        ['ref', 'slug', 'theme'].every((key) => same(row.attributes[key], owned.identity[key]))
+      );
+    }),
+  );
+}
+
+function retainMediaReferences(
+  session: Session,
+  media: Awaited<ReturnType<typeof mediaEdits>>,
+  beforeRows: BlockSummary[],
+  afterRows: BlockSummary[],
+) {
+  const mediaReferences = [...session.media_references];
+
+  for (const [index, { binding }] of media.resolved.entries()) {
+    const row = afterRows.find((item) => same(item.path, binding.path));
+    const attribute =
+      binding.bind.id ?? binding.bind.url ?? binding.bind.alt ?? binding.bind.size_slug;
+    assert(row && attribute, 'invalid_media_binding');
+    const value = media.edits[index].attributes[attribute];
+    assert(value !== undefined, 'invalid_media_binding');
+
+    const ownerIndex = mediaReferences.findIndex(
+      (owned) =>
+        owned.client_id === row.clientId &&
+        owned.attribute === attribute &&
+        same(owned.value, value),
+    );
+    const before = beforeRows.find((item) => item.clientId === row.clientId);
+    const changed = Object.values(binding.bind).some(
+      (key) => !same(before?.attributes[key], row.attributes[key]),
+    );
+
+    if (ownerIndex === -1 || changed) {
+      const owned = {
+        client_id: row.clientId,
+        attribute,
+        value,
+        media_id: binding.media_id,
+        ...media.references[index],
+      };
+
+      if (ownerIndex === -1) {
+        mediaReferences.push(owned);
+      } else {
+        mediaReferences[ownerIndex] = owned;
+      }
+    }
+  }
+
+  session.media_references = mediaReferences.filter((owned) => {
+    const row = afterRows.find((item) => item.clientId === owned.client_id);
+
+    return row && same(row.attributes[owned.attribute], owned.value);
+  });
+}
+
+async function edit(context: Context, input: EditInput): Promise<JsonObject> {
+  const { wp, session, editor, actions } = context;
+  context.available();
+  noteForeignChanges(context);
+
+  if (session.workflow === 'attached' && !session.preview) {
+    refuseAmbiguousUnion(wp, context.rows());
+  }
+
+  const { requested, explicitFootnoteInput, structuralFootnoteInput } = requestedEdits(
+    context,
+    input,
+  );
+
+  const draft = editCheckpoint(context);
+  const draftBefore = draft.before;
+  const hasSettings =
+    input.post || input.settings || input.binding_writes.length || input.media_bindings.length;
+  let settings = hasSettings
+    ? await prepareSettings(wp, input, context.livePost(), session.schema)
+    : emptySettings(context);
+  const media = await mediaEdits(wp, input.media_bindings);
+  const edits = [...requested, ...media.edits];
+  const liveFields = draftBefore.fields;
+  checkEditDependencies(
+    context,
+    edits,
+    settings,
+    liveFields,
+    structuralFootnoteInput,
+    explicitFootnoteInput,
+  );
+
+  if (input.open_pattern_section) {
+    await openPatternSection(
+      wp,
+      context.rows(),
+      input.open_pattern_section.section_client_id,
+      context.available,
+    );
+  }
+
+  const beforeRows = context.rows();
+  const before = new Map(beforeRows.map((row) => [row.clientId, observedState(row)]));
+  const rootBefore = rootState(wp).children;
+  const stored = documentContent(wp);
+  const content = plannedContent(wp, stored);
+  const plan = await preparePlan(wp, edits, content, context.target);
+  const rewritten = content === stored ? undefined : rewrittenBlocks(wp, beforeRows, stored);
+
+  checkPlannedEdit(
+    context,
+    input,
+    plan,
+    beforeRows,
+    settings,
+    content,
+    explicitFootnoteInput,
+    structuralFootnoteInput,
+  );
 
   let footnoteWrites: JsonObject | undefined;
   let footnotePermission: (() => void) | undefined;
 
   if (structuralFootnoteInput) {
-    const meta = v.parse(JsonObjectSchema, liveFields.meta);
-    assert(meta.footnotes === undefined || typeof meta.footnotes === 'string', 'meta_unavailable');
-    const declared = input.settings?.meta?.footnotes;
-    assert(declared === undefined || typeof declared === 'string', 'unsupported_field_value', {
-      field: 'settings.meta.footnotes',
-      next_step: 'Supply the complete final Footnote body list as a JSON string.',
-    });
-    const prepared = await prepareStructuralFootnotePlan(
-      wp,
-      plan,
-      meta.footnotes ?? '',
-      declared,
-      session.observed,
-    );
-    footnoteWrites = { ...prepared.footnote_writes, requested_edits: input.edits.length };
-    footnotePermission = prepared.permission;
-    const post = context.livePost();
-    const currentMeta = context.fields(post, ['date_gmt']).meta;
-    // Compare the whole observed metadata immediately before deriving a settings plan.
-    assert(same(session.observed_fields.meta, currentMeta), 'field_changed', {
-      fields: ['meta'],
-      stage: 'footnote_settings',
-      next_step: 'Read the draft and complete settings before preparing another edit.',
-    });
-    settings = await prepareSettings(
-      wp,
-      { ...input, settings: { meta: { footnotes: prepared.footnotes } } },
-      post,
-      session.schema,
-    );
-    checkConflicts(context, beforeRows, plan.touched);
+    const prepared = await prepareFootnoteSettings(context, input, plan, liveFields, beforeRows);
+    settings = prepared.settings;
+    footnoteWrites = prepared.footnoteWrites;
+    footnotePermission = prepared.footnotePermission;
   }
 
-  const galleryPermission = await prepareCompleteGallery(
+  const { galleryPermission, tabsPermission, contextPermission } = await preparePairedPermissions(
     wp,
+    input,
     plan,
     media,
-    !input.post &&
-      !input.open_pattern_section &&
-      !input.binding_writes.length &&
-      !Object.keys(settings.values).length,
+    settings,
   );
-  const tabsPermission =
-    !input.post &&
-    !input.open_pattern_section &&
-    !input.binding_writes.length &&
-    !input.media_bindings.length &&
-    !Object.keys(settings.values).length
-      ? await prepareCompleteTabs(wp, plan)
-      : undefined;
-  const contextPermission =
-    !input.post &&
-    !input.open_pattern_section &&
-    !input.binding_writes.length &&
-    !input.media_bindings.length &&
-    !Object.keys(settings.values).length
-      ? await prepareCompleteContextMove(wp, plan)
-      : undefined;
   const paired = structuralFootnoteInput || explicitFootnoteInput;
 
   if (explicitFootnoteInput) {
@@ -1981,66 +2255,17 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
       verifyDraftTransition(context, draft, documentBlocks(wp));
     }
 
-    const liveRows = context.rows();
-    const plannedRows = readTree(wp, plan.blocks);
-
-    // Mismatch diagnostics scan the whole document, so build them only on failure.
-    if (!same(blockState(liveRows), blockState(plannedRows))) {
-      throw new BlockworkError('prepared_content_changed', {
-        mismatches: blockMismatches(plannedRows, liveRows, true),
-      });
-    }
-
-    const parsed = readTree(wp, wp.blocks.parse(wp.blocks.serialize(documentBlocks(wp))));
-
-    if (!roundTripMatches(wp, liveRows, parsed)) {
-      throw new BlockworkError(
-        'serialization_mismatch',
-        serializationDiagnostics(parsed, liveRows, 'edit_round_trip', 'parsed_to_live'),
-      );
-    }
-
-    for (const [name, value] of Object.entries(settings.values)) {
-      assert(
-        same(context.fields(context.livePost(), settings.date_fields)[name], value),
-        'prepared_settings_changed',
-        { field: name },
-      );
-    }
-
-    if (!footnote) {
-      assert(same(draftState(context), draft.current), 'intervening_editor_change');
-    }
+    checkAppliedEdit(context, plan, settings, draft, footnote);
   } catch (error) {
     if (mutated) {
-      const rollback = async (): Promise<{
-        outcome: 'rolled_back' | 'partial';
-        failure?: Error;
-      }> => {
-        if (!footnote) {
-          return rollBack(context, plan, settings, draft);
-        }
-
-        try {
-          const restored = await restoreExplicitFootnotes(
-            wp,
-            context.target,
-            footnote,
-            readFields,
-            context.available,
-            () => {},
-          );
-
-          return { outcome: restored ? 'rolled_back' : 'partial', failure: undefined };
-        } catch (cause) {
-          return {
-            outcome: 'partial',
-            failure: new Error('The paired restore failed.', { cause }),
-          };
-        }
-      };
-
-      const { outcome, failure: rollbackFailure } = await rollback();
+      const { outcome, failure: rollbackFailure } = await restoreFailedEdit(
+        context,
+        plan,
+        settings,
+        draft,
+        footnote,
+        readFields,
+      );
 
       if (footnote && outcome === 'partial') {
         session.footnote_recovery = true;
@@ -2061,90 +2286,8 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
   observeOwnChanges(context, before, rootBefore, afterRows);
 
   observeFields(context, settings);
-  const requestedBefore = session.requested;
-  const referencesBefore = session.references;
-  const mediaReferencesBefore = session.media_references;
-  const sharedReferencesBefore = Object.fromEntries(
-    Object.entries(session.shared_references).map(([id, owned]) => [
-      id,
-      {
-        identity: { ...owned.identity },
-        graph: owned.graph.map((reference) => ({ ...reference })),
-      },
-    ]),
-  );
-  const patch = settingsPatch(settings);
-  session.requested = { ...session.requested, ...patch };
-
-  if (patch.meta) {
-    session.requested.meta = {
-      ...v.parse(JsonObjectSchema, requestedBefore.meta ?? {}),
-      ...v.parse(JsonObjectSchema, patch.meta),
-    };
-  }
-
-  session.references = [...session.references, ...settings.references];
-  const sharedReferences = { ...session.shared_references };
-
-  for (const [id, owned] of Object.entries(plan.references)) {
-    if (!sharedReferences[id] || !same(sharedReferences[id].identity, owned.identity)) {
-      sharedReferences[id] = owned;
-    }
-  }
-
-  session.shared_references = Object.fromEntries(
-    Object.entries(sharedReferences).filter(([id, owned]) => {
-      const row = afterRows.find((item) => item.clientId === id);
-
-      return (
-        row &&
-        ['ref', 'slug', 'theme'].every((key) => same(row.attributes[key], owned.identity[key]))
-      );
-    }),
-  );
-  const mediaReferences = [...session.media_references];
-
-  for (const [index, { binding }] of media.resolved.entries()) {
-    const row = afterRows.find((item) => same(item.path, binding.path));
-    const attribute =
-      binding.bind.id ?? binding.bind.url ?? binding.bind.alt ?? binding.bind.size_slug;
-    assert(row && attribute, 'invalid_media_binding');
-    const value = media.edits[index].attributes[attribute];
-    assert(value !== undefined, 'invalid_media_binding');
-
-    const ownerIndex = mediaReferences.findIndex(
-      (owned) =>
-        owned.client_id === row.clientId &&
-        owned.attribute === attribute &&
-        same(owned.value, value),
-    );
-    const before = beforeRows.find((item) => item.clientId === row.clientId);
-    const changed = Object.values(binding.bind).some(
-      (key) => !same(before?.attributes[key], row.attributes[key]),
-    );
-
-    if (ownerIndex === -1 || changed) {
-      const owned = {
-        client_id: row.clientId,
-        attribute,
-        value,
-        media_id: binding.media_id,
-        ...media.references[index],
-      };
-
-      if (ownerIndex === -1) {
-        mediaReferences.push(owned);
-      } else {
-        mediaReferences[ownerIndex] = owned;
-      }
-    }
-  }
-
-  session.media_references = mediaReferences.filter((owned) => {
-    const row = afterRows.find((item) => item.clientId === owned.client_id);
-
-    return row && same(row.attributes[owned.attribute], owned.value);
-  });
+  const { requestedBefore, referencesBefore, mediaReferencesBefore, sharedReferencesBefore } =
+    recordEditReferences(session, plan, settings, media, beforeRows, afterRows);
   session.edit_count += 1;
   session.expected_state = context.liveState();
   session.last_edit = {
