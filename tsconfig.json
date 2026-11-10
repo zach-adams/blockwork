@@ -9,7 +9,8 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "types": []
   },
-  "include": ["src/**/*.ts", "oxlint.config.ts", "tools/oxlint/readability.ts"]
+  "include": ["src/**/*.ts", "oxlint.config.ts", "tools/oxlint/readability.ts"],
+  "exclude": ["src/bootstrap.ts", "src/bootstrap-contracts.ts"]
 }

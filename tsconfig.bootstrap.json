@@ -1,0 +1,9 @@
+// The host bootstrap runs in Node. The rest of src/ runs in the browser.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/bootstrap.ts"],
+  "exclude": []
+}

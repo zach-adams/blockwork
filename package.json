@@ -11,7 +11,7 @@
     "lint:fix": "pnpm lint --fix",
     "format": "oxfmt src oxlint.config.ts tools",
     "format:check": "oxfmt --check src oxlint.config.ts tools",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.bootstrap.json",
     "compile": "node tools/compile.mjs",
     "test": "pnpm compile && node --test tests/*.test.mjs",
     "test:integration": "node --test tests/integration/*.test.mjs",
