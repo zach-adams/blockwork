@@ -73,6 +73,21 @@ returns it. Edits write no receipts. `blockwork.build` reports the package
 When a call fails, follow its `hint` and `next`. [Recovery](recovery.md) covers
 host failures, conflicts, rollbacks, uncertain saves, and `status`.
 
+### Interrupted turns and context summaries
+
+If a turn is interrupted or the REPL loses its variables, get the tab inventory,
+bind the same editor tab, create the caller again, and connect with the same
+target and workflow. The outline `connect` returns shows what survived. Read it
+before rebuilding anything.
+
+REPL variables survive a context summary. After one, check your bindings first,
+such as `nodeRepl.write({ tab: typeof tab, blockwork: typeof blockwork })`. While
+they exist, continue with them and skip `cua.rewriteDocumentation()`, which
+prints 50 to 120 KB that Blockwork doesn't need.
+
+For a lost binding, follow the steps below and call `status()` before changing
+anything. Retain any uncertain save receipt separately for read-only recovery.
+
 ### Lost browser binding
 
 `browser_command_failed` with
@@ -128,6 +143,13 @@ uploads have coincided with this binding failure, but its cause is unknown.
 After rebinding, try a smaller or recompressed file for a new preparation. The
 decoded upload limit is 5 MiB. Never retry an uncertain `save_resource` with
 another file; verify its stored receipt first.
+
+### Receipt directory access
+
+Saves keep a receipt in `~/.local/share/blockwork/receipts/`. When your sandbox
+can't write there, `createBlockwork` throws `EPERM`. Pass a writable directory
+from the start: `createBlockwork(tab, { receipt_directory: "/ABSOLUTE/WRITABLE/FOLDER" })`.
+Pass the same option to later callers, including a front-end capture caller.
 
 ## connect
 

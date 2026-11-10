@@ -156,6 +156,13 @@ again first. In a user's editor they see it switch previews for a moment.
 | `"tablet"`, `"mobile"` | Gutenberg's preview at the site's breakpoint less 1 pixel, 781 and 479 by default (`preset`) | The same, or `width_unavailable` when their window is too narrow for it |
 | 320 to 2560 | Exactly that many pixels (`exact`) | `width_requires_background` |
 
+After inserting or restyling, compare desktop and mobile views with the reference.
+In an owned background tab, use a design frame's width, such as `1920`, instead
+of `desktop`, and add `tablet` when the layout changes there. An attached editor,
+including one handed to the user to re-save, takes only the named previews. Read
+`canvas_width` before calling its layout broken, and use `capture_page` after
+saving for exact front-end widths.
+
 In a background tab, Blockwork resizes its own tab's window, which the user
 never sees. Below a 782-pixel window wp-admin switches to a small-screen layout
 that covers the canvas, so a width the editor's sidebars would push below that

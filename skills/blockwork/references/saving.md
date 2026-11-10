@@ -290,3 +290,14 @@ including after animations ended. A missing `states.selector` also returns
 
 For a requested front-end screenshot, use `capture_page` in your own tab as
 above, and close it afterward.
+
+`capture_page` hides cookie and consent notices for its shots, so don't dismiss
+them yourself.
+
+## Revision links
+
+Give `revisions.url` only when the user asks to undo or compare a save, says
+the change is wrong, or the live page has a problem you could not fix. Its
+revisions screen restores title, content, and excerpt, never slug, status,
+parent, or terms. If `revisions` is `null` then, say WordPress linked no
+revision for this document.

@@ -91,6 +91,10 @@ content, save a draft with it, then publish through a final status-only edit and
 save if authorized. Do not publish an empty intermediate document. Release and
 close the owned tab when finished.
 
+Save a draft once the first structure is in place. A draft save publishes
+nothing, and unsaved editor work is lost if the turn is interrupted or the
+browser session resets.
+
 Every failure has `error`, `hint`, and `next`. Handle them as follows:
 
 - `invalid_create` or `invalid_resource_request`: correct the field path and

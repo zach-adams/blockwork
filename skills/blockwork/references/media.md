@@ -125,6 +125,24 @@ identity. Moving or styling that block retains the guard. Removing, replacing or
 retargeting it retires that owner only; a separate featured-media setting keeps
 its own guard. Reverting restores the previous owners.
 
+## Repeat a change on another site
+
+When the user wants a change you made with Blockwork repeated on another site,
+such as a staging or production copy, make it there as a new background edit,
+unless the user or the project moves content between sites another way, such
+as a database sync. Each site needs its own sign-in in the browser.
+
+1. Find and connect to the matching document on that site in a new owned tab,
+   using the [normal workflow](../SKILL.md#choose-the-workflow).
+2. Read the blocks your change touched, by `search` or `name` with attributes.
+   Confirm they hold what the source held before your change. If they differ,
+   tell the user what differs and ask before changing them.
+3. Send the same edits with this document's `client_id`s, then check and save
+   using the [normal checks](../SKILL.md#check-and-save). For media or internal
+   links you inserted, map them as
+   [copy sections between sites](#copy-sections-between-sites)
+   describes.
+
 ## Copy a document to another site
 
 Moving a page between sites, such as staging to live, uses one caller per site,

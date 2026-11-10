@@ -5,6 +5,24 @@ and `update_style`. Gutenberg data keeps its registered spelling, such as
 `fontSize`, `className`, and `@mobile`. Block trees use `inner_blocks`;
 Gutenberg runtime objects use `innerBlocks`.
 
+## Before building a section
+
+1. Print `doc.custom_blocks` and check for a theme or plugin block that already
+   does the job, such as a carousel, tabs, accordion, or form. Use it instead of
+   composing the same thing from core blocks. Read its `attribute_guide`, insert
+   containers empty when they add their own children, and fill those reported in
+   `changed` before inserting more. Leave no blank child behind.
+2. Read existing sections and other pages with `read({source})` for typography,
+   colors, and spacing. Use theme presets and native controls. To reuse a section,
+   read it with `markup: true`, change its text, and insert that markup to retain
+   styling and responsive attributes. For other saved pages, read
+   [source documents](inspection.md#other-documents).
+3. For images, read [media inspection](media.md#inspect-media-and-attach-it-to-blocks)
+   and use inspected attachment values.
+
+Build a section in one `edit`, then refine it in small batches. Repeated custom
+items need one or two per edit; see [native initialization](#native-initialization).
+
 ## edit
 
 ```js

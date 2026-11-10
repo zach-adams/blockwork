@@ -198,6 +198,11 @@ breakpoints. Without a configuration, the native defaults are
 mobile through 480px and tablet above 480px through 782px. If the runtime
 evidence is absent, responsive patches refuse.
 
+When the request names no device, change the base value as the native control
+does in its default state. Leave viewport and pseudo-state choices alone unless
+the request names that case or asks every width to match. If an override keeps
+the new base value off a width, say so in your report.
+
 Base `style` values apply at any width without an override; there is no `@desktop`
 key. `style["@mobile"]` and `style["@tablet"]` each override the base independently,
 and tablet does not cascade into mobile. Removing a mobile property exposes the
