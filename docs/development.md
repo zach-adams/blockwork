@@ -44,7 +44,7 @@ locks, and session controls. Ctrl-C discards it. `pnpm fixture` keeps the smalle
 paragraph fixture available, and `pnpm fixture --acf` adds ACF Pro with the editing
 suite's ACF field groups and block; [real-editor tests](editing-tests.md) says
 where the plugin copy lives. See [setup and performance](integration-fixture.md)
-and [native results and open issues](integration-results.md).
+and [historical native results](history/integration-results.md).
 
 `pnpm test:editing` runs Blockwork calls on real Gutenberg on Playground, and
 `pnpm test:agent` scores natural-language requests through the desktop app. Neither

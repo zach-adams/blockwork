@@ -147,6 +147,8 @@ request uses your plan's usage like any other agent task.
   them unchanged, and can still edit the blocks around them.
 - Multisite networks and WordPress installed in a subdirectory are untested.
 
+See [feature support](docs/support.md) for current coverage and known limits.
+
 ## For WordPress developers
 
 Blockwork is a skill, which is a set of instructions the agent reads, plus a
@@ -173,6 +175,8 @@ editor computes are easy to get wrong by hand.
   operation, its request shape, and its errors.
 - [Editor workflows](docs/editor-workflows.md) explains how Blockwork shares an
   editor with a person, tracks what changed, and recovers from failures.
+- [Feature support](docs/support.md) lists coverage and known limits.
+- [Contributing](CONTRIBUTING.md) maps the code and checks.
 - [Developing Blockwork](docs/development.md) covers building, testing, and the
   local tools for working on it.
 - [AGENTS.md](AGENTS.md) holds the rules for agents working on this repository.

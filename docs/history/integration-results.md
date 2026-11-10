@@ -1,7 +1,7 @@
 # Native integration results
 
 API names in this report reflect the tested build. For current request names,
-read the [operation reference](../skills/blockwork/SKILL.md#references).
+read the [operation reference](../../skills/blockwork/SKILL.md#references).
 
 The October 4, 2026 run exercised the installed Blockwork 0.1.1 engine through
 the desktop in-app browser's supported CDP API. All sites were disposable
@@ -9,8 +9,8 @@ Playground fixtures with PHP 8.4.25 and Twenty Twenty-Five. No plugin behavior
 changed. The installed engine matched the checkout bundle, with SHA-256
 `f47feabad7c4cafa47babf38056c8fa6f0d4d11bfa164e229563c6afb0997e5d`.
 
-The [runner](../tests/integration/desktop.mjs) has eleven native cases. See
-[setup](integration-fixture.md#native-desktop-suite) to repeat them. Passing
+The [runner](../../tests/integration/desktop.mjs) has eleven native cases. See
+[setup](../integration-fixture.md#native-desktop-suite) to repeat them. Passing
 means the requested behavior and cleanup both passed. A verified save does
 not make a case pass when cleanup fails.
 
@@ -109,7 +109,7 @@ fixture startup and pauses between host calls. The final Node command completed
 in 41.34 seconds, with both test files passing and six sites disposed. That
 command ran alongside `pnpm check`, so its startup timings are not an isolated
 performance benchmark. No new RSS measurement was taken; see the earlier
-[fixture measurements](integration-fixture.md#measurements-on-october-4-2026).
+[fixture measurements](integration-measurements.md#measurements-on-october-4-2026).
 
 All desktop tabs and fixture servers were closed after the run. Descriptors and
 reports contain no passwords, cookies, or nonces. Fixture users and records
@@ -123,7 +123,7 @@ PHP 8.4.25, signed in as the administrator. The installed engine matched the
 checkout bundle at commit `2519db0`, with SHA-256
 `646645fd043f846451ba4815dbf39a6d50f2b2500001f6875a6553c285a06123`. The fixture
 first showed WordPress's login form, and the agent stopped until the user
-signed in. See the [abilities fixture](integration-fixture.md#abilities-fixture)
+signed in. See the [abilities fixture](../integration-fixture.md#abilities-fixture)
 for what each ability does.
 
 All 23 scripted steps returned the expected fields:
