@@ -19,8 +19,8 @@ pnpm build
 
 `pnpm check` checks Oxfmt formatting, then runs Oxlint, TypeScript checking,
 compilation, and the Node test suite against the compiled browser file.
-`pnpm build` requires those checks
-before packaging. Run `pnpm format`, `pnpm lint:fix`, then `pnpm format` to apply
+`pnpm build` requires those checks before packaging. `pnpm package` packages
+without them, for people who only want to install the plugin. Run `pnpm format`, `pnpm lint:fix`, then `pnpm format` to apply
 formatting and available lint fixes. `pnpm format:check` checks without rewriting files.
 
 The [TypeScript style guide](typescript-style.md) follows Google's conventions
@@ -32,8 +32,8 @@ Oxlint uses the generic rules from [anti-slop](https://github.com/dmmulroy/anti-
 with upstream defaults except statement spacing. The project spacing rule groups
 short declarations and separates control flow. The copied rules, licenses, and pinned revision live in
 `tools/oxlint/anti-slop/`. They are development tools and are excluded from the
-plugin. Installation configures `.githooks/` so each commit runs `pnpm check`;
-the GitHub Actions workflow runs `pnpm build` and, in five parallel jobs, the
+plugin. Installation configures `.githooks/` so each commit checks formatting, lint, and
+types. The GitHub Actions workflow runs `pnpm build` and, in five parallel jobs, the
 integration tests on pushes and pull requests. Changes to root Markdown files or
 `docs/` alone start no run.
 Agent requirements are in [AGENTS.md](../AGENTS.md#required-development-checks).

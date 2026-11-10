@@ -79,5 +79,5 @@ pnpm check
 ```
 
 `pnpm check` includes formatting, linting, type checking, compilation, and tests.
-The pre-commit hook runs it, and CI runs the checked build. Fix the code rather
+The pre-commit hook runs all of it except compilation and tests, and CI runs the checked build. Fix the code rather
 than adding suppressions or changing rules to pass a check.

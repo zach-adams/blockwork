@@ -66,20 +66,20 @@ which the desktop app shares its plugin settings with.
 git clone https://github.com/zach-adams/blockwork.git
 cd blockwork
 pnpm install --frozen-lockfile
-pnpm build
+pnpm package
 codex plugin marketplace add .
 codex plugin add blockwork@blockwork-local
 ```
 
-`pnpm build` runs the project's checks, so it takes a minute or two. Afterward,
-Blockwork is listed in the app's Plugins directory under the "Blockwork local"
+`pnpm package` builds the plugin in a few seconds without running the
+project's checks. Afterward, Blockwork is listed in the app's Plugins directory under the "Blockwork local"
 source. If a chat that was already open doesn't find it, reload the app. To
 update, pull the latest changes, then build and install again:
 
 ```sh
 git pull
 pnpm install --frozen-lockfile
-pnpm build
+pnpm package
 codex plugin add blockwork@blockwork-local
 ```
 

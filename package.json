@@ -21,7 +21,8 @@
     "fixture:integration": "node tools/integration-fixture.mjs",
     "scenario": "node tools/scenario.mjs",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
-    "build": "pnpm check && node tools/package.mjs",
+    "build": "pnpm check && pnpm package",
+    "package": "node tools/package.mjs",
     "local:install": "pnpm check && node tools/package.mjs --development && codex plugin marketplace add . && codex plugin add blockwork@blockwork-local"
   },
   "engines": {
