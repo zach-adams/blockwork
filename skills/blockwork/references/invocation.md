@@ -144,13 +144,6 @@ After rebinding, try a smaller or recompressed file for a new preparation. The
 decoded upload limit is 5 MiB. Never retry an uncertain `save_resource` with
 another file; verify its stored receipt first.
 
-### Receipt directory access
-
-Saves keep a receipt in `~/.local/share/blockwork/receipts/`. When your sandbox
-can't write there, `createBlockwork` throws `EPERM`. Pass a writable directory
-from the start: `createBlockwork(tab, { receipt_directory: "/ABSOLUTE/WRITABLE/FOLDER" })`.
-Pass the same option to later callers, including a front-end capture caller.
-
 ## connect
 
 ```js

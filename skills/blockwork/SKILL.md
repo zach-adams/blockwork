@@ -35,8 +35,12 @@ const blockwork = await createBlockwork(tab);
 ```
 
 Read the browser's CDP documentation before any CDP command. Keep `blockwork`
-at REPL top level. If the host tool, CDP capability, or package-file access is
-missing, report the gap and stop. Never attach external CDP, install a local
+at REPL top level. Saves keep a receipt in `~/.local/share/blockwork/receipts/`.
+When your sandbox can't write there, `createBlockwork` throws `EPERM`, so pass a
+folder you can write from the start, and to every later caller:
+`createBlockwork(tab, { receipt_directory: "/ABSOLUTE/WRITABLE/FOLDER" })`. If
+the host tool, CDP capability, or package-file access is missing, report the gap
+and stop. Never attach external CDP, install a local
 browser, or evaluate the engine through CDP yourself.
 
 Host output fills context fast. Blockwork never needs a tab's accessibility
