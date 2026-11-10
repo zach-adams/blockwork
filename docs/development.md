@@ -9,7 +9,8 @@ for working on it. Agents working on this repository also follow
 Use Node 22.18 or newer and the pnpm version pinned in `package.json` for local
 development. The editor source is strict TypeScript in `src/`. Valibot validates
 incoming data, and esbuild packages it with the editor as one JavaScript
-expression. Plugin users need no local tools or dependency installation.
+expression. The installed plugin runs without local tools; building it from this
+repository needs the tools the [README](../README.md#install) lists.
 
 ```sh
 pnpm install --frozen-lockfile

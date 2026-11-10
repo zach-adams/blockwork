@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "blockwork",
   "version": "0.1.1",
-  "description": "Edit Gutenberg in an active editor or a background document, including selections, annotations, settings, shared entities, media, and terms. Uses the internal app browser by default.",
+  "description": "Edit WordPress pages and posts in the block editor, in a page you have open or in the background, including post settings, media, categories, and tags.",
   "author": {
     "name": "Zach Adams",
     "url": "https://github.com/zach-adams"

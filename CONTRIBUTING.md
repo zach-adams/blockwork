@@ -42,3 +42,12 @@ without the checks. For local development, run
 `pnpm local:install` to build and install the development package. Follow the
 [local desktop workflow](docs/development.md#local-desktop-plugin) to verify the
 installed files and reload the app if needed.
+
+## Pull requests
+
+Open pull requests against `dev`. `main` holds only released work, and releases
+fast-forward it from `dev`. Keep each pull request to one change, run `pnpm check`,
+and list the real-editor cases or agent tasks you ran. Reproduce bugs on a
+Playground fixture or `example.test` data, and leave real site names, content,
+screenshots, and credentials out of issues and pull requests. Report
+vulnerabilities privately as [`SECURITY.md`](SECURITY.md) describes.

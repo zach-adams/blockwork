@@ -36,8 +36,9 @@ Blockwork can change text, layout, colors, spacing, and typography, including
 separate settings for tablets and phones. It can upload images and other media,
 create posts, pages, and entries of your site's custom post types, and change a post's title, URL slug,
 status, template, featured image, categories, and tags. It also works with blocks
-that your theme and plugins add, and it can edit shared content such as synced
-patterns, templates, and navigation menus when you ask for that.
+that your theme and plugins add, and it can edit synced patterns when you ask for
+that. Editing templates and navigation menus is experimental; see
+[support status](docs/support.md).
 
 ## What you need
 
