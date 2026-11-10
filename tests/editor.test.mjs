@@ -2431,7 +2431,7 @@ test('document connect, preparation, verification and recovery select schema fie
       const saved = await f.call('save', { receipt: prepared.receipt });
       assert.equal(saved.persistence, 'verified', JSON.stringify(saved));
       const reads = f.requests.filter(({ path, method }) => method === 'GET' && path.startsWith(`${session.schema.collection}/${identity}?`));
-      assert.equal(reads.length, 3, type);
+      assert.equal(reads.length, 4, type);
       const recovered = await f.call('recover', { target: { site_url: target.site_url, user_id: 5 }, receipt: prepared.receipt });
       assert.equal(recovered.persistence, 'verified', JSON.stringify(recovered));
 
@@ -2473,7 +2473,7 @@ test('dotted schema property names keep all document reads full-shaped', async (
   const recovered = await f.call('recover', { target: { site_url: target.site_url, user_id: 5 }, receipt: saved.receipt });
   assert.equal(recovered.persistence, 'verified', JSON.stringify(recovered));
   const reads = f.requests.filter(({ path, method }) => method === 'GET' && path.startsWith('/wp/v2/pages/7?'));
-  assert.equal(reads.length, 4);
+  assert.equal(reads.length, 5);
 
   for (const { path } of reads) assert.equal(new URL(path, target.site_url).searchParams.has('_fields'), false);
 });
@@ -2542,6 +2542,57 @@ test('document reads retain the undeclared core pattern sync status for validati
     f.post.wp_pattern_sync_status = 'unsynced';
     const refused = await f.call(connected ? 'prepare_save' : 'connect');
     assert.equal(refused.error, 'pattern_not_synced');
+    assert.equal(f.saves, 0);
+  }
+});
+
+test('save refuses a stored change after preparation without calling savePost', async () => {
+  for (const [field, change] of [
+    ['content', f => { f.post.content.raw = 'Other writer'; }],
+    ['meta', f => { f.post.meta = { other: 'Other writer' }; }],
+    ['modified', f => { f.post.modified = '2026-11-09T12:00:01'; }],
+  ]) {
+    const f = fixture();
+    await f.edit();
+    assert.equal((await f.save()).persistence, 'verified');
+    f.saves = 0;
+    assert.equal((await f.edit([{ ...changes[0], attributes: { content: 'Next edit' } }])).ok, true);
+    const prepared = await f.call('prepare_save');
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    change(f);
+    const stored = structuredClone(f.post);
+    const result = await f.call('save', { receipt: prepared.receipt });
+    assert.equal(result.error, 'saved_record_changed', JSON.stringify(result));
+    assert.equal(result.persistence, 'not_attempted');
+    assert.equal(result.diagnostics.stage, 'before_save');
+    assert.equal(result.diagnostics.post_id, 7);
+    assert.equal(result.diagnostics.saved_token_changed, true);
+
+    if (field !== 'modified') assert.ok(result.diagnostics.fields.some(name => name.startsWith(field)));
+    assert.match(result.hint, /overwrite saved changes/);
+    assert.match(result.hint, /fresh editor/);
+    assert.ok(result.next);
+    assert.equal(f.saves, 0);
+    assert.deepEqual(f.post, stored);
+    const status = await f.call('status');
+    assert.equal(status.last_request.outcome, 'failed');
+    assert.equal(f.window.__blockwork_editor.save.attempted, false);
+  }
+});
+
+test('save rechecks the draft and native lock after the stored-record read', async () => {
+  for (const [change, error] of [
+    [f => { f.blocks[0].attributes.content = 'Human typing'; }, 'intervening_editor_change'],
+    [f => { f.locked = true; }, 'post_locked'],
+  ]) {
+    const f = fixture();
+    await f.edit();
+    const prepared = await f.call('prepare_save');
+    f.api = ({ path }) => { if (path.startsWith('/wp/v2/pages/7?')) change(f); };
+
+    const result = await f.call('save', { receipt: prepared.receipt });
+    assert.equal(result.error, error, JSON.stringify(result));
+    assert.equal(result.persistence, 'not_attempted');
     assert.equal(f.saves, 0);
   }
 });

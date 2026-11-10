@@ -9,9 +9,10 @@ const saved = await blockwork.save(); // background
 
 `save` makes two page calls. The first checks the editor, the signed-in user,
 and the saved record, refuses an unrequested publication change, and returns a
-receipt that the caller stores. The second confirms the draft has not changed,
-calls Gutenberg's `savePost` once, and compares a fresh REST read and native
-parse with the receipt. A verified result has `persistence: "verified"`,
+receipt that the caller stores. The second rereads the saved record and compares
+its fields and modification markers with preparation, then confirms the draft
+has not changed, calls Gutenberg's `savePost` once, and compares a fresh REST read
+and native parse with the receipt. A verified result has `persistence: "verified"`,
 `status`, `link`, `editor_url`, `revisions`, and `valid`. `editor_url` opens the
 document in the post editor, or the Site Editor for templates, template parts,
 and navigation. `revisions` is `{latest_id, url}` for the latest revision
@@ -82,6 +83,17 @@ Background preparation starts its Heartbeat lock check alongside the identity,
 saved-record, and schema reads. Read, currentness, reference, and duplicate
 checks retain error precedence over the lock result. Every check must pass
 before Gutenberg saves.
+
+A saved-record change between preparation and saving refuses before `savePost`
+with `saved_record_changed`. `diagnostics.stage` is `before_save`, `post_id` and
+`post_type` identify the document, and `saved_token_changed: true` reports that
+the saved fields or modification markers changed. `fields` lists changed field
+names without values; it can be empty when only a modification marker changed.
+No save was attempted. Tell the user before replacing an owned background tab
+with a fresh editor, inspect the current document, reconcile the intended edits,
+and prepare again. Only the user can decide whether to reload an attached editor
+and discard pending work. This check cannot prevent a writer from changing the
+server after the final read and before WordPress accepts the save.
 
 Document reads for connect, save preparation, verification, preview currentness,
 and recovery request all schema properties and fixed baseline fields, replacing

@@ -781,6 +781,7 @@ export interface Session {
   save?: {
     receipt: Receipt;
     state: string;
+    saved_token: string;
     attempted: boolean;
     // Save subscriptions replace the session baseline; retain this plan's original.
     original: JsonObject;

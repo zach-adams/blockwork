@@ -2583,6 +2583,7 @@ async function prepareSave(context: Context, saveAllPending?: boolean): Promise<
     generated_slug: generatesSlug || undefined,
     scope: shared?.scope,
   });
+  const savedToken = await context.savedToken(saved);
   assert(context.liveState() === state, 'intervening_editor_change');
 
   // Core posts active meta box forms even when readable document fields match.
@@ -2593,7 +2594,15 @@ async function prepareSave(context: Context, saveAllPending?: boolean): Promise<
     return { ok: true, persistence: 'unchanged', saved: false };
   }
 
-  session.save = { receipt, state, attempted: false, original, desired, rows: parsed };
+  session.save = {
+    receipt,
+    state,
+    saved_token: savedToken,
+    attempted: false,
+    original,
+    desired,
+    rows: parsed,
+  };
 
   return { ok: true, receipt, operation_started: false, persistence: 'not_attempted' };
 }
@@ -2709,9 +2718,25 @@ async function save(
   );
   assert(session.workflow === 'background' || saveAllPending === true, 'save_all_pending_required');
   context.available();
+  context.pauseAutosave();
+  const saved = await context.fresh();
+
+  if ((await context.savedToken(saved)) !== prepared.saved_token) {
+    session.persistence = 'not_attempted';
+    throw new BlockworkError('saved_record_changed', {
+      stage: 'before_save',
+      post_id: context.target.post_id,
+      post_type: context.target.post_type,
+      saved_token_changed: true,
+      fields: fieldNames(
+        fieldChanges(prepared.original, context.fields(saved, receipt.date_fields)),
+      ),
+    });
+  }
+
+  context.available();
   assert(context.liveState() === prepared.state, 'intervening_editor_change');
   assert(editor.isEditedPostSaveable() && !editor.isPostSavingLocked(), 'save_refused');
-  context.pauseAutosave();
   const persistenceBefore = session.persistence;
   prepared.attempted = true;
   session.persistence = 'uncertain';
