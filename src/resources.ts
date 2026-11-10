@@ -847,6 +847,602 @@ function settledVerification(
   );
 }
 
+function resourceStatus(
+  input: Extract<v.InferOutput<typeof ResourceRequestSchema>, { operation: 'resource_status' }>,
+) {
+  requireSignIn();
+  assert(new URL(input.target.site_url).origin === location.origin, 'target_mismatch');
+  const current = window.__blockwork_resources_v1;
+  assert(!current || same(current.target, input.target), 'target_mismatch');
+
+  // Local observation must neither acquire the session nor reset a running job's budget.
+  return bounded({
+    ok: true,
+    busy: Boolean(current?.busy || window.__blockwork_editor?.busy),
+    attempted: current?.attempted ?? false,
+    verified: current?.verified ?? false,
+    receipt: current?.receipt,
+    resource_id: current?.resource_id,
+  });
+}
+
+async function discoverDocuments(
+  input: Extract<v.InferOutput<typeof ResourceRequestSchema>, { operation: 'discover' }>,
+  wp: WordPress,
+  target: SiteTarget,
+  user: Awaited<ReturnType<typeof readerIdentity>>,
+  browsing: string,
+) {
+  const types = v.parse(
+    v.record(
+      v.string(),
+      v.object({
+        ...RouteSchema.entries,
+        supports: JsonObjectSchema,
+        viewable: v.optional(v.boolean()),
+      }),
+    ),
+    await api(wp, '/wp/v2/types?context=edit'),
+  );
+
+  const available = Object.values(types).filter(
+    (type) => v.is(PostTypeSchema, type.slug) && type.supports.editor,
+  );
+
+  const base = input.target.site_url.replace(/\/$/, '');
+
+  if (input.url) {
+    const searched = available.filter(
+      (type) => type.viewable && (!input.post_type || type.slug === input.post_type),
+    );
+    const record = await documentAt(wp, input.url, searched);
+
+    return bounded({
+      ok: true,
+      target,
+      user,
+      record,
+      editor_url: `${base}/wp-admin/post.php?post=${record.id}&action=edit`,
+    });
+  }
+
+  if (!input.post_type) {
+    return bounded({
+      ok: true,
+      target,
+      user,
+      types: available.map((type) => ({
+        name: type.slug,
+        collection: route(type),
+        new_editor_url: `${base}/wp-admin/post-new.php?post_type=${type.slug}`,
+      })),
+    });
+  }
+
+  const type = available.find((item) => item.slug === input.post_type);
+  assert(type, 'unsupported_post_type');
+
+  const records = await api(
+    wp,
+    `${route(type)}?${browsing}&status=any&_fields=id,type,status,title,slug,link`,
+  );
+
+  assert(Array.isArray(records), 'invalid_native_response');
+
+  return bounded({
+    ok: true,
+    target,
+    user,
+    records,
+    page: input.page,
+    may_have_more: records.length === input.limit,
+    new_editor_url: `${base}/wp-admin/post-new.php?post_type=${type.slug}`,
+  });
+}
+
+async function downloadMedia(
+  input: Extract<v.InferOutput<typeof ResourceRequestSchema>, { operation: 'download_media' }>,
+  wp: WordPress,
+  started: number,
+) {
+  const { record } = await readMedia(wp, input.id);
+  assert(
+    typeof record.source_url === 'string' && URL.canParse(record.source_url),
+    'media_download_source_unavailable',
+  );
+  const source = new URL(record.source_url);
+  const timeoutMs = input.timeout_ms - (Date.now() - started);
+  assert(timeoutMs > 0, 'media_download_timeout');
+  const bytes = await downloadBytes(source, maximumUploadBytes, timeoutMs);
+  assert(bytes.length > 0, 'media_download_empty');
+  const chunks = [];
+
+  // Bound each spread to the browser's argument limit, including a 5 MiB file.
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32768)));
+  }
+
+  const upload = v.parse(UploadSchema, {
+    name: decodeURIComponent(source.pathname.split('/').at(-1) ?? ''),
+    mime_type: record.mime_type,
+    base64: btoa(chunks.join('')),
+  });
+
+  return bounded({ ok: true, upload }, Math.ceil(maximumUploadBytes / 3) * 4 + 4096);
+}
+
+async function inspectMedia(
+  input: Extract<v.InferOutput<typeof ResourceRequestSchema>, { operation: 'inspect_media' }>,
+  wp: WordPress,
+  target: SiteTarget,
+  user: Awaited<ReturnType<typeof readerIdentity>>,
+  browsing: string,
+) {
+  if (input.id) {
+    return bounded({
+      ok: true,
+      target,
+      user,
+      record: await mediaRecord((await readMedia(wp, input.id)).record),
+    });
+  }
+
+  if (input.ids || input.slugs) {
+    const wanted = input.ids ?? input.slugs ?? [];
+    const filter = input.ids
+      ? `include=${input.ids.join(',')}&orderby=include`
+      : `slug=${wanted.map((slug) => encodeURIComponent(slug)).join(',')}`;
+    const found = await api(
+      wp,
+      `/wp/v2/media?context=edit&per_page=${wanted.length}&${filter}${input.media_type ? `&media_type=${input.media_type}` : ''}`,
+    );
+    assert(Array.isArray(found), 'invalid_native_response');
+    const identities = v.parse(v.array(v.object({ id, slug: v.string() })), found);
+    const keys = new Set(identities.map((record) => (input.ids ? record.id : record.slug)));
+    const records = await Promise.all(found.map(mediaRecord));
+
+    return bounded({
+      ok: true,
+      target,
+      user,
+      records,
+      missing: wanted.filter((key) => !keys.has(key)),
+    });
+  }
+
+  const records = await api(
+    wp,
+    `/wp/v2/media?${browsing}${input.media_type ? `&media_type=${input.media_type}` : ''}`,
+  );
+
+  assert(Array.isArray(records), 'invalid_native_response');
+
+  return bounded({
+    ok: true,
+    target,
+    user,
+    records: await Promise.all(records.map(mediaSummary)),
+    page: input.page,
+    may_have_more: records.length === input.limit,
+  });
+}
+
+async function inspectTerms(
+  input: Extract<v.InferOutput<typeof ResourceRequestSchema>, { operation: 'inspect_terms' }>,
+  wp: WordPress,
+  target: SiteTarget,
+  user: Awaited<ReturnType<typeof readerIdentity>>,
+  browsing: string,
+) {
+  if (!input.taxonomy) {
+    return bounded({
+      ok: true,
+      target,
+      user,
+      taxonomies: await api(wp, '/wp/v2/taxonomies?context=edit'),
+    });
+  }
+
+  const tax = await taxonomy(wp, input.taxonomy);
+  const path = route(tax);
+
+  if (input.id) {
+    const record = await readRecord(wp, path, { kind: 'term', taxonomy: input.taxonomy }, input.id);
+
+    return bounded({
+      ok: true,
+      target,
+      user,
+      record: await publicRecord(record),
+      impact: tax.hierarchical
+        ? await deletionImpact(wp, path, record)
+        : { native_count: record.count, direct_children: [], complete: true },
+    });
+  }
+
+  assert(input.parent_id === undefined || tax.hierarchical, 'taxonomy_not_hierarchical');
+
+  const records = await api(
+    wp,
+    `${path}?${browsing}${input.parent_id === undefined ? '' : `&parent=${input.parent_id}`}`,
+  );
+
+  assert(Array.isArray(records), 'invalid_native_response');
+
+  return bounded({
+    ok: true,
+    target,
+    user,
+    records: await Promise.all(records.map(publicRecord)),
+    page: input.page,
+    may_have_more: records.length === input.limit,
+  });
+}
+
+async function verifyResource(
+  input: Extract<v.InferOutput<typeof ResourceRequestSchema>, { operation: 'verify_resource' }>,
+  wp: WordPress,
+  session: ResourceSession,
+) {
+  // Recovery consumes a receipt for reads only. It never restores a prepared write.
+  if (!session.receipt) {
+    session.receipt = input.receipt;
+    session.attempted = true;
+    session.resource_id = input.receipt.id;
+  }
+
+  const owned = session.receipt?.key === input.receipt.key;
+  assert(!owned || same(session.receipt, input.receipt), 'receipt_mismatch');
+  assert(
+    !owned ||
+      input.resource_id === undefined ||
+      session.resource_id === undefined ||
+      input.resource_id === session.resource_id,
+    'resource_id_mismatch',
+  );
+
+  const result = await verify(
+    wp,
+    input.receipt,
+    input.resource_id ?? (owned ? session.resource_id : undefined),
+    owned && session.acknowledged,
+  );
+
+  if (owned) {
+    session.verified = result.persistence === 'verified';
+    session.settled ||= settledVerification(
+      input.receipt,
+      result.persistence,
+      session.acknowledged,
+      result.error,
+    );
+  }
+
+  return {
+    ...result,
+    corrective_update: owned ? session.corrective_update : undefined,
+    next:
+      (owned && session.settled) ||
+      settledVerification(
+        input.receipt,
+        result.persistence,
+        owned && session.acknowledged,
+        result.error,
+      )
+        ? 'inspect_resource'
+        : 'verify_resource_do_not_replay',
+  };
+}
+
+async function saveResource(
+  input: Extract<v.InferOutput<typeof ResourceRequestSchema>, { operation: 'save_resource' }>,
+  wp: WordPress,
+  session: ResourceSession,
+) {
+  assert(
+    session.receipt && same(input.receipt, session.receipt) && !session.attempted && session.fields,
+    'resource_not_prepared',
+  );
+  const receipt = session.receipt;
+  await validateReceipt(receipt);
+  const path = await collection(wp, receipt);
+  const schema = await contract(wp, receipt.id ? `${path}/${receipt.id}` : path);
+  assert(schema.token === receipt.schema_token, 'stale_resource_schema');
+
+  for (const reference of session.references ?? []) {
+    const record = await api(wp, reference.path);
+    const currentToken = await entityToken(record);
+    assert(currentToken === reference.token, 'stale_resource_reference');
+  }
+
+  if (receipt.id) {
+    const current = await readRecord(wp, path, receipt, receipt.id);
+    assert((await entityToken(current)) === receipt.original_token, 'stale_resource');
+
+    if (receipt.impact_token) {
+      assert(
+        (await deletionImpact(wp, path, current)).impact_token === receipt.impact_token,
+        'stale_term_impact',
+      );
+    }
+  } else {
+    const found = await api(
+      wp,
+      `${path}?context=edit&slug=${encodeURIComponent(String(receipt.desired.slug))}&per_page=2`,
+    );
+
+    assert(Array.isArray(found) && found.length === 0, 'slug_already_exists');
+  }
+
+  let body: FormData | undefined;
+
+  if (session.upload) {
+    body = new FormData();
+    body.append(
+      'file',
+      new Blob([uploadBytes(session.upload)], { type: session.upload.mime_type }),
+      session.upload.name,
+    );
+
+    for (const [name, value] of Object.entries(session.fields)) {
+      body.append(name, String(value));
+    }
+  }
+
+  session.attempted = true;
+
+  let response: JsonValue;
+
+  if (receipt.action === 'delete') {
+    response = await api(wp, `${path}/${receipt.id}?force=true`, 'DELETE');
+  } else if (body) {
+    const upload = body;
+    // A fixed 30 seconds, not capped by the budget, and awaited to the end:
+    // see awaitedRequest.
+    response = await awaitedRequest(`POST ${routeLabel(path)}`, 30000, (signal) =>
+      wp.apiFetch({ path, method: 'POST', body: upload, cache: 'no-store', signal }),
+    );
+  } else {
+    response = await api(wp, receipt.id ? `${path}/${receipt.id}` : path, 'POST', session.fields);
+  }
+
+  if (receipt.action !== 'delete') {
+    assert(
+      v.is(v.object({ id }), response) && (!receipt.id || response.id === receipt.id),
+      'resource_save_unconfirmed',
+    );
+    session.resource_id = response.id;
+  }
+
+  session.acknowledged = true;
+
+  // Verifying rereads the record and can download an upload again. When
+  // too little of this call's time is left, report the acknowledged write
+  // rather than start a verification the invoker would cut off.
+  if (remainingMs() < verifyReserveMs) {
+    return {
+      ok: false,
+      error: 'verification_deferred',
+      persistence: 'uncertain',
+      receipt,
+      resource_id: session.resource_id,
+      next: 'verify_resource_do_not_replay',
+    };
+  }
+
+  let result = await verify(wp, receipt, session.resource_id, session.acknowledged);
+
+  if (
+    receipt.kind === 'media' &&
+    receipt.action === 'create' &&
+    result.persistence === 'different' &&
+    'diagnostics' in result &&
+    result.diagnostics
+  ) {
+    const correction: JsonObject = {};
+
+    for (const name of result.diagnostics.fields) {
+      if (name === 'slug' && result.diagnostics.slug_made_unique) {
+        continue;
+      }
+
+      assert(
+        ['title', 'alt_text', 'caption', 'description', 'post', 'slug'].includes(name),
+        'unsupported_media_field',
+      );
+      correction[name] = receipt.desired[name];
+    }
+
+    const fields = Object.keys(correction);
+
+    if (fields.length) {
+      // Correction is an update of the acknowledged ID, never another upload.
+      session.corrective_update = { fields, acknowledged: false };
+      const corrected = await api(wp, `${path}/${session.resource_id}`, 'POST', correction);
+      assert(
+        v.is(v.object({ id }), corrected) && corrected.id === session.resource_id,
+        'resource_save_unconfirmed',
+      );
+      session.corrective_update.acknowledged = true;
+
+      if (remainingMs() < verifyReserveMs) {
+        return {
+          ok: false,
+          error: 'verification_deferred',
+          persistence: 'uncertain',
+          receipt,
+          resource_id: session.resource_id,
+          corrective_update: session.corrective_update,
+          next: 'verify_resource_do_not_replay',
+        };
+      }
+
+      result = await verify(wp, receipt, session.resource_id, session.acknowledged);
+    }
+  }
+
+  session.verified = result.persistence === 'verified';
+  session.settled = settledVerification(
+    receipt,
+    result.persistence,
+    session.acknowledged,
+    result.error,
+  );
+
+  return { ...result, corrective_update: session.corrective_update };
+}
+
+async function prepareResource(
+  input: Extract<
+    v.InferOutput<typeof ResourceRequestSchema>,
+    { operation: 'prepare_media' | 'prepare_term' }
+  >,
+  wp: WordPress,
+  session: ResourceSession,
+) {
+  assert(!session.attempted || session.settled, 'verify_do_not_replay');
+  const kind = input.operation === 'prepare_media' ? 'media' : 'term';
+  let action: ResourceReceipt['action'];
+
+  if (input.operation === 'prepare_media') {
+    action = input.upload ? 'create' : 'update';
+  } else {
+    action = input.action;
+  }
+
+  assert(
+    action === 'create' ? input.id === undefined : input.id !== undefined,
+    'invalid_resource_identity',
+  );
+  const tax = input.operation === 'prepare_term' ? await taxonomy(wp, input.taxonomy) : undefined;
+  const path = tax ? route(tax) : '/wp/v2/media';
+  const schema = await contract(wp, input.id ? `${path}/${input.id}` : path);
+
+  const receipt: ResourceReceipt = {
+    key: '',
+    target: input.target,
+    kind,
+    action,
+    id: input.id,
+    taxonomy: tax?.slug,
+    original_token: null,
+    schema_token: schema.token,
+    desired: {},
+  };
+
+  const record = input.id ? await readRecord(wp, path, receipt, input.id) : undefined;
+
+  if (record) {
+    receipt.original_token = await entityToken(record);
+    assert(input.edit_token === receipt.original_token, 'stale_resource');
+  }
+
+  const fields: JsonObject = Object.fromEntries(
+    Object.entries(input.fields).map(([name, value]) => {
+      let nativeName = name;
+
+      if (name === 'alt') {
+        nativeName = 'alt_text';
+      } else if (name === 'parent_id') {
+        nativeName = kind === 'media' ? 'post' : 'parent';
+      }
+
+      return [nativeName, value];
+    }),
+  );
+
+  bounded(fields, 64 * 1024);
+  validateFields(fields, schema.args);
+
+  const references = [];
+
+  if (tax && v.is(id, fields.parent)) {
+    const seen = new Set([input.id]);
+    let parent = fields.parent;
+
+    while (parent) {
+      assert(!seen.has(parent) && seen.size < 32, 'invalid_term_parent');
+      seen.add(parent);
+      const ancestor = await readRecord(wp, path, receipt, parent);
+      assert(v.is(zeroId, ancestor.parent), 'term_parent_unavailable');
+      references.push({
+        path: `${path}/${parent}?context=edit`,
+        token: await entityToken(ancestor),
+      });
+      parent = ancestor.parent;
+    }
+  }
+
+  if (action === 'delete') {
+    assert(
+      input.operation === 'prepare_term' &&
+        input.scope === 'all_relationships' &&
+        record &&
+        !Object.keys(fields).length,
+      'term_deletion_scope_required',
+    );
+
+    if (tax?.hierarchical) {
+      const impact = await deletionImpact(wp, path, record);
+      assert(impact.complete && impact.direct_children.length === 0, 'term_has_children');
+      receipt.impact_token = impact.impact_token;
+    }
+  } else {
+    assert(Object.keys(fields).length > 0, 'no_change');
+
+    if (action === 'create') {
+      assert(fields.slug && (kind === 'media' || fields.name), 'creation_fields_required');
+
+      const found = await api(
+        wp,
+        `${path}?context=edit&slug=${encodeURIComponent(String(fields.slug))}&per_page=2`,
+      );
+
+      assert(Array.isArray(found) && found.length === 0, 'slug_already_exists');
+    }
+
+    if (record && v.is(JsonObjectSchema, fields.meta)) {
+      fields.meta = { ...v.parse(JsonObjectSchema, record.meta), ...fields.meta };
+    }
+
+    receipt.desired = { ...fields };
+
+    if (record) {
+      receipt.desired = { ...writableFields(record, schema.properties), ...fields };
+    }
+
+    assert(
+      !record || !same(receipt.desired, writableFields(record, schema.properties)),
+      'no_change',
+    );
+  }
+
+  if (input.operation === 'prepare_media' && input.upload) {
+    const bytes = uploadBytes(input.upload);
+    const fileHash = await bytesHash(bytes);
+    receipt.upload = {
+      name: input.upload.name,
+      mime_type: input.upload.mime_type,
+      size: bytes.length,
+      hash: fileHash,
+    };
+  }
+
+  receipt.key = await receiptKey(receipt);
+  session.receipt = receipt;
+  session.fields = fields;
+  session.references = references;
+  session.upload = input.operation === 'prepare_media' ? input.upload : undefined;
+  session.attempted = false;
+  session.acknowledged = false;
+  session.verified = false;
+  session.settled = false;
+  session.corrective_update = undefined;
+  session.resource_id = input.id;
+
+  return { ok: true, persistence: 'not_attempted', receipt };
+}
+
 export async function resourceOperation(request: ResourceRequest) {
   const started = Date.now();
   let session: ResourceSession | undefined;
@@ -862,20 +1458,7 @@ export async function resourceOperation(request: ResourceRequest) {
     const input = validated.output;
 
     if (input.operation === 'resource_status') {
-      requireSignIn();
-      assert(new URL(input.target.site_url).origin === location.origin, 'target_mismatch');
-      const current = window.__blockwork_resources_v1;
-      assert(!current || same(current.target, input.target), 'target_mismatch');
-
-      // Local observation must neither acquire the session nor reset a running job's budget.
-      return bounded({
-        ok: true,
-        busy: Boolean(current?.busy || window.__blockwork_editor?.busy),
-        attempted: current?.attempted ?? false,
-        verified: current?.verified ?? false,
-        receipt: current?.receipt,
-        resource_id: current?.resource_id,
-      });
+      return resourceStatus(input);
     }
 
     if (input.operation === 'verify_resource') {
@@ -923,555 +1506,30 @@ export async function resourceOperation(request: ResourceRequest) {
         : '';
 
     if (input.operation === 'discover') {
-      const types = v.parse(
-        v.record(
-          v.string(),
-          v.object({
-            ...RouteSchema.entries,
-            supports: JsonObjectSchema,
-            viewable: v.optional(v.boolean()),
-          }),
-        ),
-        await api(wp, '/wp/v2/types?context=edit'),
-      );
-
-      const available = Object.values(types).filter(
-        (type) => v.is(PostTypeSchema, type.slug) && type.supports.editor,
-      );
-
-      const base = input.target.site_url.replace(/\/$/, '');
-
-      if (input.url) {
-        const searched = available.filter(
-          (type) => type.viewable && (!input.post_type || type.slug === input.post_type),
-        );
-        const record = await documentAt(wp, input.url, searched);
-
-        return bounded({
-          ok: true,
-          target,
-          user,
-          record,
-          editor_url: `${base}/wp-admin/post.php?post=${record.id}&action=edit`,
-        });
-      }
-
-      if (!input.post_type) {
-        return bounded({
-          ok: true,
-          target,
-          user,
-          types: available.map((type) => ({
-            name: type.slug,
-            collection: route(type),
-            new_editor_url: `${base}/wp-admin/post-new.php?post_type=${type.slug}`,
-          })),
-        });
-      }
-
-      const type = available.find((item) => item.slug === input.post_type);
-      assert(type, 'unsupported_post_type');
-
-      const records = await api(
-        wp,
-        `${route(type)}?${browsing}&status=any&_fields=id,type,status,title,slug,link`,
-      );
-
-      assert(Array.isArray(records), 'invalid_native_response');
-
-      return bounded({
-        ok: true,
-        target,
-        user,
-        records,
-        page: input.page,
-        may_have_more: records.length === input.limit,
-        new_editor_url: `${base}/wp-admin/post-new.php?post_type=${type.slug}`,
-      });
+      return await discoverDocuments(input, wp, target, user, browsing);
     }
 
     if (input.operation === 'download_media') {
-      const { record } = await readMedia(wp, input.id);
-      assert(
-        typeof record.source_url === 'string' && URL.canParse(record.source_url),
-        'media_download_source_unavailable',
-      );
-      const source = new URL(record.source_url);
-      const timeoutMs = input.timeout_ms - (Date.now() - started);
-      assert(timeoutMs > 0, 'media_download_timeout');
-      const bytes = await downloadBytes(source, maximumUploadBytes, timeoutMs);
-      assert(bytes.length > 0, 'media_download_empty');
-      const chunks = [];
-
-      // Bound each spread to the browser's argument limit, including a 5 MiB file.
-      for (let offset = 0; offset < bytes.length; offset += 32768) {
-        chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32768)));
-      }
-
-      const upload = v.parse(UploadSchema, {
-        name: decodeURIComponent(source.pathname.split('/').at(-1) ?? ''),
-        mime_type: record.mime_type,
-        base64: btoa(chunks.join('')),
-      });
-
-      return bounded({ ok: true, upload }, Math.ceil(maximumUploadBytes / 3) * 4 + 4096);
+      return await downloadMedia(input, wp, started);
     }
 
     if (input.operation === 'inspect_media') {
-      if (input.id) {
-        return bounded({
-          ok: true,
-          target,
-          user,
-          record: await mediaRecord((await readMedia(wp, input.id)).record),
-        });
-      }
-
-      if (input.ids || input.slugs) {
-        const wanted = input.ids ?? input.slugs ?? [];
-        const filter = input.ids
-          ? `include=${input.ids.join(',')}&orderby=include`
-          : `slug=${wanted.map((slug) => encodeURIComponent(slug)).join(',')}`;
-        const found = await api(
-          wp,
-          `/wp/v2/media?context=edit&per_page=${wanted.length}&${filter}${input.media_type ? `&media_type=${input.media_type}` : ''}`,
-        );
-        assert(Array.isArray(found), 'invalid_native_response');
-        const identities = v.parse(v.array(v.object({ id, slug: v.string() })), found);
-        const keys = new Set(identities.map((record) => (input.ids ? record.id : record.slug)));
-        const records = await Promise.all(found.map(mediaRecord));
-
-        return bounded({
-          ok: true,
-          target,
-          user,
-          records,
-          missing: wanted.filter((key) => !keys.has(key)),
-        });
-      }
-
-      const records = await api(
-        wp,
-        `/wp/v2/media?${browsing}${input.media_type ? `&media_type=${input.media_type}` : ''}`,
-      );
-
-      assert(Array.isArray(records), 'invalid_native_response');
-
-      return bounded({
-        ok: true,
-        target,
-        user,
-        records: await Promise.all(records.map(mediaSummary)),
-        page: input.page,
-        may_have_more: records.length === input.limit,
-      });
+      return await inspectMedia(input, wp, target, user, browsing);
     }
 
     if (input.operation === 'inspect_terms') {
-      if (!input.taxonomy) {
-        return bounded({
-          ok: true,
-          target,
-          user,
-          taxonomies: await api(wp, '/wp/v2/taxonomies?context=edit'),
-        });
-      }
-
-      const tax = await taxonomy(wp, input.taxonomy);
-      const path = route(tax);
-
-      if (input.id) {
-        const record = await readRecord(
-          wp,
-          path,
-          { kind: 'term', taxonomy: input.taxonomy },
-          input.id,
-        );
-
-        return bounded({
-          ok: true,
-          target,
-          user,
-          record: await publicRecord(record),
-          impact: tax.hierarchical
-            ? await deletionImpact(wp, path, record)
-            : { native_count: record.count, direct_children: [], complete: true },
-        });
-      }
-
-      assert(input.parent_id === undefined || tax.hierarchical, 'taxonomy_not_hierarchical');
-
-      const records = await api(
-        wp,
-        `${path}?${browsing}${input.parent_id === undefined ? '' : `&parent=${input.parent_id}`}`,
-      );
-
-      assert(Array.isArray(records), 'invalid_native_response');
-
-      return bounded({
-        ok: true,
-        target,
-        user,
-        records: await Promise.all(records.map(publicRecord)),
-        page: input.page,
-        may_have_more: records.length === input.limit,
-      });
+      return await inspectTerms(input, wp, target, user, browsing);
     }
 
     if (input.operation === 'verify_resource') {
-      // Recovery consumes a receipt for reads only. It never restores a prepared write.
-      if (!session.receipt) {
-        session.receipt = input.receipt;
-        session.attempted = true;
-        session.resource_id = input.receipt.id;
-      }
-
-      const owned = session.receipt?.key === input.receipt.key;
-      assert(!owned || same(session.receipt, input.receipt), 'receipt_mismatch');
-      assert(
-        !owned ||
-          input.resource_id === undefined ||
-          session.resource_id === undefined ||
-          input.resource_id === session.resource_id,
-        'resource_id_mismatch',
-      );
-
-      const result = await verify(
-        wp,
-        input.receipt,
-        input.resource_id ?? (owned ? session.resource_id : undefined),
-        owned && session.acknowledged,
-      );
-
-      if (owned) {
-        session.verified = result.persistence === 'verified';
-        session.settled ||= settledVerification(
-          input.receipt,
-          result.persistence,
-          session.acknowledged,
-          result.error,
-        );
-      }
-
-      return {
-        ...result,
-        corrective_update: owned ? session.corrective_update : undefined,
-        next:
-          (owned && session.settled) ||
-          settledVerification(
-            input.receipt,
-            result.persistence,
-            owned && session.acknowledged,
-            result.error,
-          )
-            ? 'inspect_resource'
-            : 'verify_resource_do_not_replay',
-      };
+      return await verifyResource(input, wp, session);
     }
 
     if (input.operation === 'save_resource') {
-      assert(
-        session.receipt &&
-          same(input.receipt, session.receipt) &&
-          !session.attempted &&
-          session.fields,
-        'resource_not_prepared',
-      );
-      const receipt = session.receipt;
-      await validateReceipt(receipt);
-      const path = await collection(wp, receipt);
-      const schema = await contract(wp, receipt.id ? `${path}/${receipt.id}` : path);
-      assert(schema.token === receipt.schema_token, 'stale_resource_schema');
-
-      for (const reference of session.references ?? []) {
-        const record = await api(wp, reference.path);
-        const currentToken = await entityToken(record);
-        assert(currentToken === reference.token, 'stale_resource_reference');
-      }
-
-      if (receipt.id) {
-        const current = await readRecord(wp, path, receipt, receipt.id);
-        assert((await entityToken(current)) === receipt.original_token, 'stale_resource');
-
-        if (receipt.impact_token) {
-          assert(
-            (await deletionImpact(wp, path, current)).impact_token === receipt.impact_token,
-            'stale_term_impact',
-          );
-        }
-      } else {
-        const found = await api(
-          wp,
-          `${path}?context=edit&slug=${encodeURIComponent(String(receipt.desired.slug))}&per_page=2`,
-        );
-
-        assert(Array.isArray(found) && found.length === 0, 'slug_already_exists');
-      }
-
-      let body: FormData | undefined;
-
-      if (session.upload) {
-        body = new FormData();
-        body.append(
-          'file',
-          new Blob([uploadBytes(session.upload)], { type: session.upload.mime_type }),
-          session.upload.name,
-        );
-
-        for (const [name, value] of Object.entries(session.fields)) {
-          body.append(name, String(value));
-        }
-      }
-
-      session.attempted = true;
-
-      let response: JsonValue;
-
-      if (receipt.action === 'delete') {
-        response = await api(wp, `${path}/${receipt.id}?force=true`, 'DELETE');
-      } else if (body) {
-        const upload = body;
-        // A fixed 30 seconds, not capped by the budget, and awaited to the end:
-        // see awaitedRequest.
-        response = await awaitedRequest(`POST ${routeLabel(path)}`, 30000, (signal) =>
-          wp.apiFetch({ path, method: 'POST', body: upload, cache: 'no-store', signal }),
-        );
-      } else {
-        response = await api(
-          wp,
-          receipt.id ? `${path}/${receipt.id}` : path,
-          'POST',
-          session.fields,
-        );
-      }
-
-      if (receipt.action !== 'delete') {
-        assert(
-          v.is(v.object({ id }), response) && (!receipt.id || response.id === receipt.id),
-          'resource_save_unconfirmed',
-        );
-        session.resource_id = response.id;
-      }
-
-      session.acknowledged = true;
-
-      // Verifying rereads the record and can download an upload again. When
-      // too little of this call's time is left, report the acknowledged write
-      // rather than start a verification the invoker would cut off.
-      if (remainingMs() < verifyReserveMs) {
-        return {
-          ok: false,
-          error: 'verification_deferred',
-          persistence: 'uncertain',
-          receipt,
-          resource_id: session.resource_id,
-          next: 'verify_resource_do_not_replay',
-        };
-      }
-
-      let result = await verify(wp, receipt, session.resource_id, session.acknowledged);
-
-      if (
-        receipt.kind === 'media' &&
-        receipt.action === 'create' &&
-        result.persistence === 'different' &&
-        'diagnostics' in result &&
-        result.diagnostics
-      ) {
-        const correction: JsonObject = {};
-
-        for (const name of result.diagnostics.fields) {
-          if (name === 'slug' && result.diagnostics.slug_made_unique) {
-            continue;
-          }
-
-          assert(
-            ['title', 'alt_text', 'caption', 'description', 'post', 'slug'].includes(name),
-            'unsupported_media_field',
-          );
-          correction[name] = receipt.desired[name];
-        }
-
-        const fields = Object.keys(correction);
-
-        if (fields.length) {
-          // Correction is an update of the acknowledged ID, never another upload.
-          session.corrective_update = { fields, acknowledged: false };
-          const corrected = await api(wp, `${path}/${session.resource_id}`, 'POST', correction);
-          assert(
-            v.is(v.object({ id }), corrected) && corrected.id === session.resource_id,
-            'resource_save_unconfirmed',
-          );
-          session.corrective_update.acknowledged = true;
-
-          if (remainingMs() < verifyReserveMs) {
-            return {
-              ok: false,
-              error: 'verification_deferred',
-              persistence: 'uncertain',
-              receipt,
-              resource_id: session.resource_id,
-              corrective_update: session.corrective_update,
-              next: 'verify_resource_do_not_replay',
-            };
-          }
-
-          result = await verify(wp, receipt, session.resource_id, session.acknowledged);
-        }
-      }
-
-      session.verified = result.persistence === 'verified';
-      session.settled = settledVerification(
-        receipt,
-        result.persistence,
-        session.acknowledged,
-        result.error,
-      );
-
-      return { ...result, corrective_update: session.corrective_update };
+      return await saveResource(input, wp, session);
     }
 
-    assert(!session.attempted || session.settled, 'verify_do_not_replay');
-    const kind = input.operation === 'prepare_media' ? 'media' : 'term';
-    let action: ResourceReceipt['action'];
-
-    if (input.operation === 'prepare_media') {
-      action = input.upload ? 'create' : 'update';
-    } else {
-      action = input.action;
-    }
-
-    assert(
-      action === 'create' ? input.id === undefined : input.id !== undefined,
-      'invalid_resource_identity',
-    );
-    const tax = input.operation === 'prepare_term' ? await taxonomy(wp, input.taxonomy) : undefined;
-    const path = tax ? route(tax) : '/wp/v2/media';
-    const schema = await contract(wp, input.id ? `${path}/${input.id}` : path);
-
-    const receipt: ResourceReceipt = {
-      key: '',
-      target: input.target,
-      kind,
-      action,
-      id: input.id,
-      taxonomy: tax?.slug,
-      original_token: null,
-      schema_token: schema.token,
-      desired: {},
-    };
-
-    const record = input.id ? await readRecord(wp, path, receipt, input.id) : undefined;
-
-    if (record) {
-      receipt.original_token = await entityToken(record);
-      assert(input.edit_token === receipt.original_token, 'stale_resource');
-    }
-
-    const fields: JsonObject = Object.fromEntries(
-      Object.entries(input.fields).map(([name, value]) => {
-        let nativeName = name;
-
-        if (name === 'alt') {
-          nativeName = 'alt_text';
-        } else if (name === 'parent_id') {
-          nativeName = kind === 'media' ? 'post' : 'parent';
-        }
-
-        return [nativeName, value];
-      }),
-    );
-
-    bounded(fields, 64 * 1024);
-    validateFields(fields, schema.args);
-
-    const references = [];
-
-    if (tax && v.is(id, fields.parent)) {
-      const seen = new Set([input.id]);
-      let parent = fields.parent;
-
-      while (parent) {
-        assert(!seen.has(parent) && seen.size < 32, 'invalid_term_parent');
-        seen.add(parent);
-        const ancestor = await readRecord(wp, path, receipt, parent);
-        assert(v.is(zeroId, ancestor.parent), 'term_parent_unavailable');
-        references.push({
-          path: `${path}/${parent}?context=edit`,
-          token: await entityToken(ancestor),
-        });
-        parent = ancestor.parent;
-      }
-    }
-
-    if (action === 'delete') {
-      assert(
-        input.operation === 'prepare_term' &&
-          input.scope === 'all_relationships' &&
-          record &&
-          !Object.keys(fields).length,
-        'term_deletion_scope_required',
-      );
-
-      if (tax?.hierarchical) {
-        const impact = await deletionImpact(wp, path, record);
-        assert(impact.complete && impact.direct_children.length === 0, 'term_has_children');
-        receipt.impact_token = impact.impact_token;
-      }
-    } else {
-      assert(Object.keys(fields).length > 0, 'no_change');
-
-      if (action === 'create') {
-        assert(fields.slug && (kind === 'media' || fields.name), 'creation_fields_required');
-
-        const found = await api(
-          wp,
-          `${path}?context=edit&slug=${encodeURIComponent(String(fields.slug))}&per_page=2`,
-        );
-
-        assert(Array.isArray(found) && found.length === 0, 'slug_already_exists');
-      }
-
-      if (record && v.is(JsonObjectSchema, fields.meta)) {
-        fields.meta = { ...v.parse(JsonObjectSchema, record.meta), ...fields.meta };
-      }
-
-      receipt.desired = { ...fields };
-
-      if (record) {
-        receipt.desired = { ...writableFields(record, schema.properties), ...fields };
-      }
-
-      assert(
-        !record || !same(receipt.desired, writableFields(record, schema.properties)),
-        'no_change',
-      );
-    }
-
-    if (input.operation === 'prepare_media' && input.upload) {
-      const bytes = uploadBytes(input.upload);
-      const fileHash = await bytesHash(bytes);
-      receipt.upload = {
-        name: input.upload.name,
-        mime_type: input.upload.mime_type,
-        size: bytes.length,
-        hash: fileHash,
-      };
-    }
-
-    receipt.key = await receiptKey(receipt);
-    session.receipt = receipt;
-    session.fields = fields;
-    session.references = references;
-    session.upload = input.operation === 'prepare_media' ? input.upload : undefined;
-    session.attempted = false;
-    session.acknowledged = false;
-    session.verified = false;
-    session.settled = false;
-    session.corrective_update = undefined;
-    session.resource_id = input.id;
-
-    return { ok: true, persistence: 'not_attempted', receipt };
+    return await prepareResource(input, wp, session);
   } catch (error) {
     const parsed = v.safeParse(ApiErrorSchema, error);
     const failure = parsed.success ? parsed.output : undefined;
