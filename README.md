@@ -56,7 +56,8 @@ and navigation menus is experimental; see [support status](docs/support.md).
 - A WordPress account that can edit the content you ask about. You sign in
   yourself, in the app's browser.
 
-Blockwork doesn't use a server or any service besides the desktop app.
+Blockwork doesn't use a server or any service besides your desktop app and its
+built-in browser.
 
 ## Install
 
