@@ -1,18 +1,17 @@
 # Blockwork
 
-Blockwork is a plugin for OpenAI's ChatGPT/Codex desktop app. It lets you ask the
-app's agent to edit pages and posts on your WordPress site in plain language. It
-runs in the app's built-in browser, so you don't install a plugin on your
-WordPress site.
+Blockwork is a plugin for OpenAI's ChatGPT/Codex desktop app. It gives the app's
+agent a cleaner way to edit WordPress pages and posts in Gutenberg, the block
+editor, through the app's built-in browser, without installing a WordPress plugin.
 
 Without Blockwork, the agent can still edit a page by reading screenshots and
-clicking through Gutenberg, WordPress's block editor, the way a person would.
-That is slow and can miss settings in side panels, nested blocks, and phone or
-tablet styles. The agent may also switch to Code editor mode, which is more
-fragile and changes your editor preferences. Blockwork works with Gutenberg
-blocks directly through the editor's JavaScript APIs and checks each change
-against your site's block rules. It uses its own hidden editor tab when one isn't
-already open, and tells you exactly what changed afterward.
+clicking through the editor the way a person would. That is slow and can miss
+settings in side panels, nested blocks, and phone or tablet styles. The agent may
+also switch to Code editor mode, which is more fragile and changes your editor
+preferences. Blockwork works with Gutenberg blocks directly through the editor's
+JavaScript APIs and checks each change against your site's block rules. It uses
+its own hidden editor tab when one isn't already open, and tells you exactly what
+changed afterward.
 
 Blockwork is an early prototype, version 0.1.2, so expect gaps and rough edges.
 
@@ -140,6 +139,12 @@ settings. Each request uses your plan's usage like any other agent task.
 
 ## Limits
 
+Blockwork isn't an all-in-one WordPress editing tool. It connects the desktop
+app's agent to the Gutenberg editor in the app's browser, and it exists only until
+sites can turn on WebMCP, a draft browser standard that lets a site offer its own
+tools to an agent. WebMCP is the right long-term fix; see
+[WebMCP in WordPress](#webmcp-in-wordpress).
+
 - It edits block editor content and post settings. It doesn't edit theme files,
   PHP code, or site-wide styles, and it doesn't install plugins.
 - It needs the block editor, so it can't edit pages built with page builders such
@@ -181,6 +186,21 @@ editor computes are easy to get wrong by hand.
 - [Developing Blockwork](docs/development.md) covers building, testing, and the
   local tools for working on it.
 - [AGENTS.md](AGENTS.md) holds the rules for agents working on this repository.
+
+### WebMCP in WordPress
+
+As of November 2026, WebMCP in WordPress is available only through experimental
+plugins:
+
+- The official [AI plugin](https://github.com/WordPress/ai) added a WebMCP
+  experiment for the block editor in version 1.5.0.
+- [webmcp-adapter](https://github.com/galatanovidiu/webmcp-adapter) is a
+  separate proof of concept that exposes WordPress abilities as tools to the
+  desktop app's built-in browser.
+
+The [WordPress 7.2 roadmap](https://make.wordpress.org/core/2026/09/18/roadmap-to-7-2/)
+lists WebMCP experimentation in the AI plugin, with no guarantee that it lands in
+7.2, which is due in early December 2026. No core release has a WebMCP date yet.
 
 ## License
 
