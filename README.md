@@ -143,7 +143,8 @@ Blockwork isn't an all-in-one WordPress editing tool. It connects the desktop
 app's agent to the Gutenberg editor in the app's browser, and it exists only until
 sites can turn on WebMCP, a draft browser standard that lets a site offer its own
 tools to an agent. WebMCP is the right long-term fix; see
-[WebMCP in WordPress](#webmcp-in-wordpress).
+[WebMCP in WordPress](#webmcp-in-wordpress). Within that focus, Blockwork has
+these limits:
 
 - It edits block editor content and post settings. It doesn't edit theme files,
   PHP code, or site-wide styles, and it doesn't install plugins.
