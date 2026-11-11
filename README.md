@@ -91,20 +91,6 @@ pnpm package
 codex plugin add blockwork@blockwork-local
 ```
 
-## Make your first edit
-
-Start with a draft page, so nothing changes on your live site while you try it.
-
-1. Open a chat in the desktop app and describe the change, naming the site and
-   page. For example: "Use Blockwork to change the main heading of my draft page
-   About on example.com to "About our team"."
-2. If the app asks to allow full browser access for the site, allow it.
-3. If WordPress asks you to sign in, the app shows you its browser. Sign in there.
-   The agent waits, then carries on. Blockwork never asks for your password, and
-   the app's browser keeps you signed in for later requests.
-4. When the agent finishes, it tells you what changed and whether it saved. Open
-   the page to check the result.
-
 ## How editing and saving work
 
 Blockwork works in one of two ways, depending on whether you have the page open:
@@ -136,13 +122,6 @@ content such as a synced pattern are saved on their own.
   slug, status, parent page, categories, or tags.
 - It uses Chrome only when you ask it to.
 
-## What Blockwork keeps
-
-Blockwork writes no files to your computer. It adds nothing to your site except
-the changes you ask for. Content the agent reads from your site becomes part of
-the chat, like anything else the agent reads, under your ChatGPT account's data
-settings. Each request uses your plan's usage like any other agent task.
-
 ## Limits
 
 Blockwork isn't an all-in-one WordPress editing tool. It connects the desktop
@@ -162,7 +141,7 @@ these limits:
 
 See [feature support](docs/support.md) for current coverage and known limits.
 
-## For WordPress developers
+## For developers
 
 Blockwork is a skill, which is a set of instructions the agent reads, plus a
 JavaScript file. The agent loads that file into the editor page through the
