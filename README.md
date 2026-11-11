@@ -1,19 +1,24 @@
 # Blockwork
 
 Blockwork is a plugin for OpenAI's ChatGPT/Codex desktop app. It gives the app's
-agent a cleaner way to edit WordPress pages and posts in Gutenberg, the block
-editor, through the app's built-in browser, without installing a WordPress plugin.
+agent a cleaner way to edit WordPress pages and posts in Gutenberg (the block
+editor) through the app's built-in browser, without needing to install a
+WordPress plugin first.
 
 Without Blockwork, the agent can still edit a page by reading screenshots and
 clicking through the editor the way a person would. That is slow and can miss
 settings in side panels, nested blocks, and phone or tablet styles. The agent may
 also switch to Code editor mode, which is more fragile and changes your editor
-preferences. Blockwork works with Gutenberg blocks directly through the editor's
-JavaScript APIs and checks each change against your site's block rules. It uses
-its own hidden editor tab when one isn't already open, and tells you exactly what
-changed afterward.
+preferences.
+
+Blockwork works with Gutenberg blocks through the app's built-in browser with the
+editor's JavaScript API and checks each change against your site's block rules.
+It uses its own hidden editor tab when one isn't already open, and tells you
+exactly what changed afterward.
 
 Blockwork is an early prototype, version 0.1.2, so expect gaps and rough edges.
+
+## Demo
 
 ![A chat in the desktop app asks Blockwork to restyle a landing page's hero, then
 add a photo background, then make it taller on phones. The editor beside the chat
