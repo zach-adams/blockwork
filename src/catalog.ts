@@ -1,10 +1,11 @@
 import { documentBlocks } from './document-view';
 import * as v from 'valibot';
-import type { BlockInput } from './contracts';
+import { ApiErrorSchema } from './contracts';
+import type { BlockInput, JsonObject } from './contracts';
 import type { Block, WordPress } from './wordpress';
 import { blockState, readTree, requireCondition, sharedReference, validity } from './inspection';
 import { same } from './values';
-import { budgetedMs, timedRequest } from './native';
+import { api, budgetedMs, timedRequest } from './native';
 import { provePreservation } from './preservation';
 
 const PatternSchema = v.object({
@@ -33,6 +34,81 @@ export async function patterns(wp: WordPress) {
   }
 
   return items;
+}
+
+const GuidelineScopesSchema = v.array(
+  v.object({ slug: v.string(), title: v.string(), order: v.number() }),
+);
+
+const GuidelineRowsSchema = v.array(
+  v.object({ slug: v.string(), content: v.object({ rendered: v.string() }) }),
+);
+
+// Gutenberg's default guideline length. A site filter can raise it, so longer
+// text is cut to keep one row from crowding the rest out of the response.
+const guidelineLength = 5000;
+
+// Gutenberg's Guidelines experiment registers these routes. Each guideline is
+// a published wp_knowledge row named guideline-{scope}, or
+// guideline-block-{namespace}_{name} for one block type.
+export async function guidelines(wp: WordPress): Promise<JsonObject> {
+  // The scope list goes first because it reports a missing route as
+  // rest_no_route. apiFetch reads a per_page=-1 list unparsed, so its 404 is a
+  // bare Response.
+  const listed = await api(wp, '/wp/v2/knowledge/guideline-scopes?_fields=slug,title,order').catch(
+    (error: unknown) => {
+      const answer = v.safeParse(ApiErrorSchema, error);
+
+      if (answer.success && answer.output.code === 'rest_no_route') {
+        return undefined;
+      }
+
+      throw error;
+    },
+  );
+
+  if (listed === undefined) {
+    return { available: false, reason: 'guidelines_not_enabled' };
+  }
+
+  // Edit context would drop every row the user can't edit, and Gutenberg lets
+  // only administrators edit published guidelines, so this reads rendered text.
+  const published = await api(
+    wp,
+    '/wp/v2/knowledge?status=publish&per_page=-1&orderby=slug&order=asc&_fields=slug,content',
+  );
+  const scopes = v.parse(GuidelineScopesSchema, listed).sort((a, b) => a.order - b.order);
+  const rows = v
+    .parse(GuidelineRowsSchema, published)
+    .map(({ slug, content }) => ({
+      slug,
+      content: wp.htmlEntities.decodeEntities(content.rendered.replace(/<[^>]*>/g, '')).trim(),
+    }))
+    .filter(({ content }) => content);
+  const text = (content: string) =>
+    content.length > guidelineLength
+      ? { content: content.slice(0, guidelineLength), truncated: true }
+      : { content };
+
+  // Like the Settings page, read only registered scopes and block types, and
+  // block rows only while the registry lists the blocks scope.
+  return {
+    available: true,
+    scopes: scopes.flatMap(({ slug, title }) => {
+      const row = rows.find((candidate) => candidate.slug === `guideline-${slug}`);
+
+      return slug !== 'blocks' && row ? [{ scope: slug, title, ...text(row.content) }] : [];
+    }),
+    blocks: scopes.some(({ slug }) => slug === 'blocks')
+      ? rows.flatMap(({ slug, content }) => {
+          const name = slug.startsWith('guideline-block-')
+            ? slug.slice('guideline-block-'.length).replace('_', '/')
+            : '';
+
+          return name && wp.blocks.getBlockType(name) ? [{ name, ...text(content) }] : [];
+        })
+      : [],
+  };
 }
 
 export function blockInput(wp: WordPress, block: Block): BlockInput {

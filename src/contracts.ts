@@ -155,6 +155,7 @@ const readEntries = {
   ),
   insertion: v.optional(v.strictObject({ parent_client_id: v.optional(candidate) })),
   patterns: v.optional(v.boolean(), false),
+  guidelines: v.optional(v.boolean(), false),
   settings: v.optional(v.boolean(), false),
 };
 

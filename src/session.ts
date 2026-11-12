@@ -1157,7 +1157,14 @@ async function readSource(
   input: ReadInput & { source: NonNullable<ReadInput['source']> },
 ): Promise<JsonObject> {
   const { wp, session, target } = context;
-  const guides = ['attribute_guide', 'style_guides', 'insertion', 'patterns', 'settings'] as const;
+  const guides = [
+    'attribute_guide',
+    'style_guides',
+    'insertion',
+    'patterns',
+    'guidelines',
+    'settings',
+  ] as const;
   const extra = guides.filter((name) => input[name] !== undefined && input[name] !== false);
   assert(!extra.length, 'source_read_blocks_only', { fields: extra });
 

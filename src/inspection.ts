@@ -4,10 +4,10 @@ import type { StyleCatalog } from './styling';
 import { JsonObjectSchema, JsonSchema } from './contracts';
 import type { BlockSummary, JsonObject, JsonValue, ReadOptions } from './contracts';
 import type { Attribute, Block, WordPress } from './wordpress';
-import { patterns, styles, variations } from './catalog';
+import { guidelines, patterns, styles, variations } from './catalog';
 import { documentRoot } from './document-view';
 import { escapeBareAmpersands, escapeBareLessThan, same, stored } from './values';
-import { BlockworkError, blockMismatches, diagnosticKey } from './errors';
+import { BlockworkError, accessFailure, blockMismatches, diagnosticKey } from './errors';
 import { debugDetails } from './debug';
 
 // Only this exact native binding is supported for ordinary block operations.
@@ -871,6 +871,26 @@ export async function projectInspection(
       result.patterns = {
         available: false,
         reason: 'native_patterns_unavailable',
+        debug: debugDetails(error),
+      };
+    }
+  }
+
+  if (options.guidelines) {
+    try {
+      result.guidelines = await guidelines(wp);
+    } catch (error) {
+      // An ended session or a timeout fails the read with its own recovery.
+      if (
+        accessFailure(error)?.error === 'reauthorization_required' ||
+        (error instanceof BlockworkError && error.code === 'request_timeout')
+      ) {
+        throw error;
+      }
+
+      result.guidelines = {
+        available: false,
+        reason: 'native_guidelines_unavailable',
         debug: debugDetails(error),
       };
     }

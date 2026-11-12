@@ -56,7 +56,7 @@ if the caller reports busy, partial, or uncertain state.
 | `media`             | Inspection, uploads, attaching, copying between sites, `capture_page`, and `view`               |
 | `shared`            | Synced patterns, overrides, templates, navigation, Query Loop, dynamic blocks, and bindings     |
 | `save-and-recovery` | Locks, other writers, lost responses, expired sessions, interruptions, and error codes          |
-| `plugins`           | Plugins that rewrite content, slow saves, meta boxes, editor extensions, CSP, and redirects     |
+| `plugins`           | Plugins that rewrite content, slow saves, meta boxes, editor extensions, CSP, redirects, and Gutenberg's Guidelines |
 | `site-config`       | Permalinks, subdirectories, non-English admin, themes, versions, and multisite                  |
 | `acf`               | ACF Pro's meta box saves, taxonomy and required fields, and ACF blocks                          |
 
@@ -86,6 +86,12 @@ the suite, and skips its cases without one. Copy the plugin folder from a site
 that has it, to each Mac that runs the suite, including the test host. It runs
 unlicensed, which is enough for its fields and blocks. `acf.php` registers the
 field groups and an ACF block, and does nothing on sites without ACF.
+
+`startEditingSite({ gutenberg: true })` installs the latest Gutenberg release
+from WordPress.org and turns on its Guidelines experiment, so that site runs the
+plugin's editor instead of core's. It needs network access when the site boots.
+Only the Guidelines case in `plugins` uses it; see
+[site guidelines](site-guidelines.md#keep-up-with-gutenberg).
 
 Select a file, finding, or case when working on a fix. Combine selectors to run
 only their intersection. A finding may cover more than one case.

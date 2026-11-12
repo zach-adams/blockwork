@@ -1458,4 +1458,44 @@ for (const action of ['save_order', 'external_change']) {
   });
 }
 
+test('without the Guidelines experiment the guidelines guide is not enabled', async () => {
+  await withDocument(site, { content: doc(paragraph('Body')) }, async ({ blockwork }) => {
+    const result = await blockwork.read({ guidelines: true });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(result.guidelines, { available: false, reason: 'guidelines_not_enabled' });
+  });
+});
+
+test('Gutenberg Guidelines reach read for registered scopes and blocks', async () => {
+  const gutenbergSite = await startEditingSite({ gutenberg: true });
+
+  try {
+    // An administrator writes guidelines, and an editor can read but not edit them.
+    await gutenbergSite.signIn('editor');
+    await gutenbergSite.php(`
+      $rows = [
+        ['guideline-copy', 'publish', 'Write in second person.'],
+        ['guideline-site', 'private', 'A placeholder the Settings page ignores.'],
+        ['guideline-block-core_heading', 'publish', 'Use sentence case.'],
+        ['guideline-block-example_missing', 'publish', 'No such block.'],
+      ];
+      foreach ($rows as [$slug, $status, $text]) {
+        $id = wp_insert_post(['post_type' => 'wp_knowledge', 'post_author' => get_user_by('login', 'admin')->ID, 'post_name' => $slug, 'post_status' => $status, 'post_title' => $slug, 'post_content' => $text], true);
+        if (is_wp_error($id)) { throw new Exception($id->get_error_message()); }
+      }
+    `);
+    await withDocument(gutenbergSite, { content: doc(paragraph('Body')) }, async ({ blockwork }) => {
+      const result = await blockwork.read({ guidelines: true });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.deepEqual(result.guidelines, {
+        available: true,
+        scopes: [{ scope: 'copy', title: 'Copy', content: 'Write in second person.' }],
+        blocks: [{ name: 'core/heading', content: 'Use sentence case.' }],
+      });
+    });
+  } finally {
+    await gutenbergSite[Symbol.asyncDispose]();
+  }
+});
+
 run();

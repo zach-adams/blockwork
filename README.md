@@ -47,6 +47,10 @@ template, featured image, categories, and tags. It also works with blocks your
 theme and plugins add, and edits synced patterns when you ask. Editing templates
 and navigation menus is experimental; see [support status](docs/support.md).
 
+If your site runs the Gutenberg plugin's Guidelines experiment, Blockwork follows
+the writing, image, and block guidelines you set there when it writes new
+content. See [site guidelines](docs/site-guidelines.md) to set them up.
+
 ## What you need
 
 - The ChatGPT/Codex desktop app. Blockwork has been tested on macOS. It doesn't

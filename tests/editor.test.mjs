@@ -412,6 +412,56 @@ test('inspection returns live attribute guidance, contextual insertion rules, an
   assert.equal((await f.call('connect', { patterns: true })).patterns.available, false);
 });
 
+test('the guidelines guide returns published guidelines for registered scopes and blocks', async () => {
+  const f = fixture();
+  const scopes = [
+    { slug: 'copy', title: 'Copy', description: 'Tone', order: 20 },
+    { slug: 'site', title: 'Site', description: 'Purpose', order: 10 },
+    { slug: 'blocks', title: 'Blocks', description: 'Per block', order: 40 },
+  ];
+  const rows = [
+    { slug: 'guideline-block-core_paragraph', content: { rendered: `<p>${'x'.repeat(5001)}</p>\n` } },
+    { slug: 'guideline-block-example_missing', content: { rendered: '<p>Unregistered block</p>\n' } },
+    { slug: 'guideline-copy', content: { rendered: '<p>Write in second person.<br />\nNo jargon &amp; no hype.</p>\n' } },
+    { slug: 'guideline-retired', content: { rendered: '<p>Unregistered scope</p>\n' } },
+    { slug: 'guideline-site', content: { rendered: '<p>For first-time buyers.</p>\n' } },
+  ];
+  f.api = ({ path }) => {
+    if (path.startsWith('/wp/v2/knowledge/guideline-scopes')) return scopes;
+
+    if (path.startsWith('/wp/v2/knowledge?')) return rows;
+  };
+
+  const read = async () => JSON.parse(JSON.stringify((await f.call('connect', { guidelines: true })).guidelines));
+
+  assert.deepEqual(await read(), {
+    available: true,
+    scopes: [
+      { scope: 'site', title: 'Site', content: 'For first-time buyers.' },
+      { scope: 'copy', title: 'Copy', content: 'Write in second person.\nNo jargon & no hype.' },
+    ],
+    blocks: [{ name: 'core/paragraph', content: 'x'.repeat(5000), truncated: true }],
+  });
+  assert.ok(f.requests.some(({ path }) => path.includes('status=publish') && path.includes('per_page=-1') && !path.includes('context=edit')));
+  scopes.pop();
+  assert.deepEqual((await read()).blocks, []);
+  f.api = ({ path }) => {
+    if (path.startsWith('/wp/v2/knowledge')) throw { code: 'rest_no_route', message: 'No route', data: { status: 404 } };
+  };
+
+  assert.deepEqual(await read(), { available: false, reason: 'guidelines_not_enabled' });
+  f.api = ({ path }) => {
+    if (path.startsWith('/wp/v2/knowledge')) return { unexpected: true };
+  };
+
+  assert.equal((await read()).reason, 'native_guidelines_unavailable');
+  f.api = ({ path }) => {
+    if (path.startsWith('/wp/v2/knowledge')) throw { code: 'rest_cookie_invalid_nonce', data: { status: 403 } };
+  };
+
+  assert.equal((await f.call('connect', { guidelines: true })).error, 'reauthorization_required');
+});
+
 test('read clamps depth and limit above their maximums and reports omitted descendants', async () => {
   const f = fixture();
   f.blocks[1] = { name: 'core/group', clientId: 'group', attributes: {}, isValid: true, innerBlocks: [
@@ -809,9 +859,9 @@ test('read copies another saved page through this editor without touching the dr
   assert.deepEqual(f.blocks.slice(0, 3), draft);
   assert.deepEqual(Object.keys(f.window.__blockwork_editor.observed).filter((id) => !Object.hasOwn(observed, id)).includes('x'), false);
 
-  const mixed = await f.call('read', { source: { post_id: 9, post_type: 'page' }, attribute_guide: { name: 'core/group' } });
+  const mixed = await f.call('read', { source: { post_id: 9, post_type: 'page' }, attribute_guide: { name: 'core/group' }, guidelines: true });
   assert.equal(mixed.error, 'source_read_blocks_only', JSON.stringify(mixed));
-  assert.deepEqual(copy(mixed.diagnostics.fields), ['attribute_guide']);
+  assert.deepEqual(copy(mixed.diagnostics.fields), ['attribute_guide', 'guidelines']);
 
   const missing = await f.call('read', { source: { post_id: 10, post_type: 'page' } });
   assert.equal(missing.error, 'source_not_found', JSON.stringify(missing));

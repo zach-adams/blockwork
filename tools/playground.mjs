@@ -32,6 +32,7 @@ export async function startFixture(
   editor = false,
   muPlugins = {},
   plugins = [],
+  steps = [],
 ) {
   const password = randomUUID();
   const configured = structuredClone(blueprint);
@@ -58,6 +59,7 @@ export async function startFixture(
       step: 'activatePlugin',
       pluginPath: `/wordpress/wp-content/plugins/${basename(path)}`,
     })),
+    ...steps,
   );
 
   if (editor) {

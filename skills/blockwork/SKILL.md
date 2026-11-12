@@ -129,6 +129,13 @@ Before styling, read [styling](references/styling.md). For other read selectors,
 source documents, guides, measurements, or widths, read
 [inspection](references/inspection.md).
 
+Before writing new copy, choosing images, or building a section, add
+`guidelines: true` to a `connect` or `read` you already make. When
+`guidelines.available` is true, apply its guidelines to the wording, images,
+and blocks the request leaves open; [site guidelines](references/inspection.md#site-guidelines)
+says which applies where. The request wins where they differ, and guidelines
+never authorize a change, a save, or a shared edit.
+
 ## Check and save
 
 Iterate in the editor; never save just to inspect appearance.

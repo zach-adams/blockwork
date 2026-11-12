@@ -26,16 +26,25 @@ async function fixturePlugins() {
   );
 }
 
+// The latest Gutenberg release from WordPress.org, with its Guidelines
+// experiment on, so a renamed experiment fails its cases.
+const gutenbergSteps = [
+  { step: 'installPlugin', pluginData: { resource: 'wordpress.org/plugins', slug: 'gutenberg' } },
+  { step: 'setSiteOptions', options: { 'gutenberg-experiments': { 'gutenberg-guidelines': 1 } } },
+];
+
 // Runs real Gutenberg in Chromium against a disposable Playground site. Each
 // case seeds its own document, so a failure never leaks into the next case.
 // With acf, the site also runs ACF Pro, which turns on the acf.php field group.
-export async function startEditingSite({ version = '7.1.4', acf = false } = {}) {
+// With gutenberg, it runs the Gutenberg plugin instead of core's editor.
+export async function startEditingSite({ version = '7.1.4', acf = false, gutenberg = false } = {}) {
   const fixture = await startFixture(
     false,
     version,
     true,
     await fixturePlugins(),
     acf ? [acfPlugin] : [],
+    gutenberg ? gutenbergSteps : [],
   );
   const session = `blockwork-editing-${randomUUID().slice(0, 8)}`;
   const browserArgs = ['--session', session];
