@@ -737,7 +737,6 @@ export interface Session {
   target: Target;
   workflow: v.InferOutput<typeof WorkflowSchema>;
   editor_instance: string;
-  user: User;
   busy: boolean;
   schema: DocumentContract;
   persisted: Post;
@@ -764,17 +763,12 @@ export interface Session {
     draft?: DraftCheckpoint;
     plan: Plan;
     settings: SettingsPlan;
-    applied_state: string;
-    pending_before: JsonObject;
-    dirty_before: boolean;
     requested_before: JsonObject;
     references_before: SettingsPlan['references'];
-    shared_references_before: Plan['references'];
     media_references_before: MediaReference[];
   };
   // References from settings edits, checked again before saving.
   references: SettingsPlan['references'];
-  shared_references: Plan['references'];
   media_references: MediaReference[];
   // Set once the draft changed outside Blockwork while this session held it.
   foreign_change?: boolean;

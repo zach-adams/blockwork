@@ -126,7 +126,6 @@ async function invoke(
   const deadline = Math.min(started + 45000, options?.deadline ?? Infinity);
   let jobId: string | undefined;
   let stage = 'start';
-  let received = false;
   let delayedChecks = 0;
   let lastDelay: unknown;
   const remaining = () => ({ timeoutMs: Math.max(1, Math.min(10000, deadline - Date.now())) });
@@ -201,8 +200,6 @@ async function invoke(
             throw new PageFailure('no_result', response.exceptionDetails);
           }
 
-          received = true;
-
           return response.result.value;
         }
 
@@ -231,7 +228,6 @@ async function invoke(
 
     return hostFailure(request, 'browser_operation_pending', {
       stage,
-      jobId,
       started,
       deadline,
       delayedChecks,
@@ -272,16 +268,14 @@ async function invoke(
 
     return hostFailure(request, 'browser_command_failed', {
       stage,
-      jobId,
       started,
       deadline,
       delayedChecks,
       cause: error,
     });
   } finally {
-    // Retain a pending or unread Promise for read-only recovery. Release only
-    // a settled handle, never cancel a native operation to force a verdict.
-    if (jobId && received) {
+    // Releasing the debugger's handle leaves the page operation running.
+    if (jobId) {
       try {
         await capability.send('Runtime.releaseObject', { objectId: jobId }, remaining());
       } catch {
@@ -357,7 +351,6 @@ const unconfirmed = new Map([
 
 interface HostAttempt {
   stage: string;
-  jobId: string | undefined;
   started: number;
   deadline: number;
   delayedChecks: number;
@@ -385,7 +378,6 @@ function uploadByteSize(request: JsonObject): number | undefined {
 function hostFailure(request: JsonObject, code: string, attempt: HostAttempt): JsonObject {
   const diagnostics = {
     stage: attempt.stage,
-    job_id: attempt.jobId,
     elapsed_ms: Date.now() - attempt.started,
     budget_ms: attempt.deadline - attempt.started,
     delayed_checks: attempt.delayedChecks || undefined,
@@ -464,7 +456,7 @@ function hostFailure(request: JsonObject, code: string, attempt: HostAttempt): J
       diagnostics,
       hint:
         bindingHint +
-        'The browser response did not establish an operation result. Retain any existing receipt and job_id. For editor operations, call status() until busy is false and read last_request; for resources, verify with the stored receipt; an ability run has no check, so tell the user its outcome is unknown. Never replay an uncertain mutation or reload the user editor.',
+        'The browser response did not establish an operation result. Keep any existing receipt. For editor operations, call status() until busy is false and read last_request; for resources, verify with the stored receipt; an ability run has no check, so tell the user its outcome is unknown. Never replay an uncertain mutation or reload the user editor.',
     },
     attempt.cause,
   );

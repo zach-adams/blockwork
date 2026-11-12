@@ -167,37 +167,9 @@ read or preparation. Do not open a post editor just for resources. For an
 unresolved write, keep the receipt and use `verify_resource` once the API is
 available.
 
-Resource `upload_bytes_different` means requested fields match but the stored
-original differs. Inspect `resource_id` and compare its preview or dimensions.
-Do not upload again. Persistence remains uncertain.
-
-Resource `verification_mismatch` returns `diagnostics.fields`, up to 12 native
-field names of at most 160 characters, never values. An acknowledged media
-create can send one corrective update to the same attachment ID. It excludes a
-stored slug equal to the requested slug followed by a hyphen and a number; if
-only that slug differs, no corrective request is sent. The mismatch still names
-`slug`, and `diagnostics.slug_made_unique: true` means WordPress found the
-requested slug in use and added a suffix. Keep the stored slug, or inspect that
-ID and prepare an update with a different slug. Other differing fields still
-get corrected. When a correction ran, `corrective_update` contains the `fields`
-sent and `acknowledged`, whether
-WordPress returned that exact ID. A failed or unconfirmed correction remains
-uncertain and requires read-only `verify_resource` with the stored receipt and
-`resource_id`; never upload again. `save_resource` and `verify_resource` return
-compact attachment `record` data as defined in
-[media](media.md#inspect-media-and-attach-it-to-blocks).
-
-After an exact acknowledged create read reports `different`, or an exact
-update/delete read reports `original` or `different`, the write is settled even
-though the requested result failed. `next: "inspect_resource"` means inspect
-that ID for a fresh `edit_token`, prepare the intended repair, and save the new
-receipt. Verified results also permit fresh preparation. `verify_do_not_replay`
-blocks unresolved resource writes and directs you to `verify_resource`, never
-editor `status`. `resource_not_prepared` means the receipt was not prepared in
-this tab or was already attempted. It cannot be saved again, even after a
-settled verification; inspect and prepare a fresh receipt for an intended repair.
-An unacknowledged create with differing fields, missing or ambiguous matches, and unverifiable upload bytes remain blocked; `upload_bytes_different` with every requested field matching settles. See
-[resource recovery](resource-writes.md#save-and-recover-resources).
+Resource write failures, such as `verification_mismatch`,
+`upload_bytes_different`, `verify_do_not_replay`, and `resource_not_prepared`,
+are covered in [resource recovery](resource-writes.md#save-and-recover-resources).
 
 ## Host failures
 
@@ -210,10 +182,10 @@ the same caller with the same copy ID. Earlier uncertain writes still need
 verification before any new write.
 
 `browser_command_failed` and `browser_operation_pending` mean no page result
-came back. `diagnostics` gives the `stage` (`start`, `poll`, or `result`) and
-the page `job_id` when one was returned. A busy or hidden page can hold a state
-check past its own 10-second timeout; Blockwork keeps checking the same job and
-counts those checks in `delayed_checks`. `browser_operation_pending` means no
+came back. `diagnostics` gives the `stage` (`start`, `poll`, or `result`). A
+busy or hidden page can hold a state check past its own 10-second timeout;
+Blockwork keeps checking the same job and counts those checks in
+`delayed_checks`. `browser_operation_pending` means no
 result came back within the 45-second limit; the job may still be running, or
 may have finished, so its outcome is unconfirmed. `browser_command_failed`
 adds `failure` with its `source` (`host`, `host_response`, or `page`) and an
@@ -243,23 +215,10 @@ Never work around it through raw CDP or another browser API. The same refusal
 after the job started carries `failure.reason: "browser_denied"` and follows
 the host failure rules below, because the outcome is unknown.
 
-- `browser_unavailable` means this caller's browser binding is gone. This includes
+- `browser_unavailable` means this caller's browser binding is gone, including
   a native pipe that closed before the response arrived. Follow
-  [lost browser binding](invocation.md#lost-browser-binding): take a fresh
-  browser and tab inventory, rebind the same tab, read its `cdp` documentation,
-  and create a new caller. If it was connected to a document, reconnect with the
-  original target and workflow, then call `status()` before any change. If it
-  was used only for site-targeted operations, resume in that same admin tab with
-  the same site target; settle any uncertain resource write with `verify_resource`
-  first. No document connection or `status()` is required for that caller.
-  Retryable reads and preparations return
-  `next: "rebind_browser"`; uncertain changes retain their do-not-replay
-  `next`. Keep the old caller's `receipt` when replacing the caller.
-  If the same page and compatible session remain, reconnect preserves the live
-  draft. Confirm its state; never reload the editor to repair a binding.
-  Large uploads have coincided with this failure, but the cause is unknown.
-  After rebinding, a smaller or recompressed file is worth trying for a new
-  preparation. Verify an uncertain upload before any new save.
+  [lost browser binding](invocation.md#lost-browser-binding) before checking
+  the failed operation's outcome.
 - Preparations (`prepare_media`, `prepare_term`, `prepare_save`) return
   `next: "retry"` unless the binding needs repair. They invoke no WordPress
   content write, so this failed call has no uncertain save to verify and does
@@ -368,22 +327,12 @@ means something on the site rewrites content, so report that and stop.
 
 ### Stale shared references
 
-`stale_entity_reference` during save preparation returns
-`next: "inspect_entity_then_reconcile"`. Its bounded diagnostics identify
-`stage: "reference_currentness"`, `entity_type`, `entity_id`,
-`owner_client_id`, and `live_block_path`. `dependency: false` identifies the
-root entity; `true` identifies a dependency of that root. No content or tokens
-appear in these diagnostics.
-
-Call `inspect_entity` for the reported entity, then `read` the owning reference
-block at its current location. Inspection does not refresh the pinned tokens.
-An `update_reference` to the same entity currently returns `no_change`, so it
-does not refresh them either; an unrelated edit does not reconcile them.
-Use a safeguarded `revert` when its checkpoint removes the reference change,
-an authorized replacement with another inspected reference, or authorized
-removal and reinsertion as separate edits. If none matches the user's intent,
-preserve the draft and report the blocker. Keep any uncertain-save recovery
-ahead of repair, and retain the whole-pending-document and meta safeguards.
+`stale_entity_reference` means the referenced entity, or one it references,
+changed or is no longer published since you inspected it, so the
+`insert_reference` or `update_reference` edit applied nothing. It returns
+`next: "inspect_entity_then_reconcile"`. Inspect the entity again and retry the
+edit with the fresh `reference_token`. If it is no longer published, ask the
+user which entity to use.
 
 ### Paired footnote edits
 

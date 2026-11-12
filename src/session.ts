@@ -112,7 +112,6 @@ import {
   editorUrl,
   entitySummary,
   postRecord,
-  readReference,
   sharedType,
 } from './shared';
 import { entityToken, mediaEdits } from './resources';
@@ -878,7 +877,6 @@ async function connect(input: Connection): Promise<JsonObject> {
       target,
       workflow: input.workflow,
       editor_instance: crypto.randomUUID(),
-      user,
       busy: false,
       schema,
       persisted: saved,
@@ -888,7 +886,6 @@ async function connect(input: Connection): Promise<JsonObject> {
       observed_fields: {},
       requested: {},
       references: [],
-      shared_references: {},
       media_references: [],
       edit_count: 0,
     };
@@ -897,7 +894,6 @@ async function connect(input: Connection): Promise<JsonObject> {
     session.busy = true;
     acquired = session;
     session.schema = schema;
-    session.user = user;
 
     if (!existing) {
       created = session;
@@ -1347,16 +1343,8 @@ function expandEdits(wp: WordPress, input: EditInput) {
   return edits;
 }
 
-function emptySettings(context: Context): SettingsPlan {
-  return {
-    values: {},
-    original: {},
-    meta_keys: [],
-    schema_token: context.session.schema.token,
-    references: [],
-    date_fields: [],
-    binding_writes: [],
-  };
+function emptySettings(): SettingsPlan {
+  return { values: {}, original: {}, meta_keys: [], references: [], date_fields: [] };
 }
 
 // The primary blocks of each edit: updated targets and new subtree roots.
@@ -1809,7 +1797,6 @@ async function preparePairedPermissions(
 
 function recordEditReferences(
   session: Session,
-  plan: Plan,
   settings: SettingsPlan,
   media: Awaited<ReturnType<typeof mediaEdits>>,
   beforeRows: BlockSummary[],
@@ -1818,15 +1805,6 @@ function recordEditReferences(
   const requestedBefore = session.requested;
   const referencesBefore = session.references;
   const mediaReferencesBefore = session.media_references;
-  const sharedReferencesBefore = Object.fromEntries(
-    Object.entries(session.shared_references).map(([id, owned]) => [
-      id,
-      {
-        identity: { ...owned.identity },
-        graph: owned.graph.map((reference) => ({ ...reference })),
-      },
-    ]),
-  );
   const patch = settingsPatch(settings);
   session.requested = { ...session.requested, ...patch };
 
@@ -1838,10 +1816,9 @@ function recordEditReferences(
   }
 
   session.references = [...session.references, ...settings.references];
-  retainSharedReferences(session, plan, afterRows);
   retainMediaReferences(session, media, beforeRows, afterRows);
 
-  return { requestedBefore, referencesBefore, mediaReferencesBefore, sharedReferencesBefore };
+  return { requestedBefore, referencesBefore, mediaReferencesBefore };
 }
 
 function checkAppliedEdit(
@@ -2056,27 +2033,6 @@ function checkPlannedEdit(
   );
 }
 
-function retainSharedReferences(session: Session, plan: Plan, afterRows: BlockSummary[]) {
-  const sharedReferences = { ...session.shared_references };
-
-  for (const [id, owned] of Object.entries(plan.references)) {
-    if (!sharedReferences[id] || !same(sharedReferences[id].identity, owned.identity)) {
-      sharedReferences[id] = owned;
-    }
-  }
-
-  session.shared_references = Object.fromEntries(
-    Object.entries(sharedReferences).filter(([id, owned]) => {
-      const row = afterRows.find((item) => item.clientId === id);
-
-      return (
-        row &&
-        ['ref', 'slug', 'theme'].every((key) => same(row.attributes[key], owned.identity[key]))
-      );
-    }),
-  );
-}
-
 function retainMediaReferences(
   session: Session,
   media: Awaited<ReturnType<typeof mediaEdits>>,
@@ -2148,7 +2104,7 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     input.post || input.settings || input.binding_writes.length || input.media_bindings.length;
   let settings = hasSettings
     ? await prepareSettings(wp, input, context.livePost(), session.schema)
-    : emptySettings(context);
+    : emptySettings();
   const media = await mediaEdits(wp, input.media_bindings);
   const edits = [...requested, ...media.edits];
   const liveFields = draftBefore.fields;
@@ -2224,8 +2180,6 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
           Boolean(tabsPermission || galleryPermission || contextPermission),
         )
       : undefined;
-  const pendingBefore = context.pending();
-  const dirtyBefore = draftBefore.dirty;
   const initialize = needsNativePreparation(plan);
   let mutated = false;
   let settingsApplied = false;
@@ -2314,8 +2268,13 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
   observeOwnChanges(context, before, rootBefore, afterRows);
 
   observeFields(context, settings);
-  const { requestedBefore, referencesBefore, mediaReferencesBefore, sharedReferencesBefore } =
-    recordEditReferences(session, plan, settings, media, beforeRows, afterRows);
+  const { requestedBefore, referencesBefore, mediaReferencesBefore } = recordEditReferences(
+    session,
+    settings,
+    media,
+    beforeRows,
+    afterRows,
+  );
   session.edit_count += 1;
   session.expected_state = context.liveState();
   session.last_edit = {
@@ -2323,12 +2282,8 @@ async function edit(context: Context, input: EditInput): Promise<JsonObject> {
     draft: footnote ? undefined : draft,
     plan,
     settings,
-    applied_state: session.expected_state,
-    pending_before: pendingBefore,
-    dirty_before: dirtyBefore,
     requested_before: requestedBefore,
     references_before: referencesBefore,
-    shared_references_before: sharedReferencesBefore,
     media_references_before: mediaReferencesBefore,
   };
 
@@ -2542,7 +2497,6 @@ async function revert(context: Context): Promise<JsonObject> {
 
   session.requested = last.requested_before;
   session.references = last.references_before;
-  session.shared_references = last.shared_references_before;
   session.media_references = last.media_references_before;
   session.last_edit = undefined;
   session.expected_state = context.liveState();
@@ -2602,43 +2556,6 @@ async function prepareSave(context: Context, saveAllPending?: boolean): Promise<
         owner_client_id: owned.client_id,
         live_block_path: row.path,
         media_id: owned.media_id,
-      });
-    }
-  }
-
-  for (const [ownerId, owned] of Object.entries(session.shared_references)) {
-    const row = context.rows().find((item) => item.clientId === ownerId);
-
-    if (
-      !row ||
-      !['ref', 'slug', 'theme'].every((key) => same(row.attributes[key], owned.identity[key]))
-    ) {
-      continue;
-    }
-
-    for (const [index, reference] of owned.graph.entries()) {
-      await readReference(wp, context.target, reference).catch((cause: unknown) => {
-        const native = v.safeParse(ApiErrorSchema, cause);
-
-        if (
-          (cause instanceof BlockworkError && cause.code === 'stale_entity_reference') ||
-          (native.success && native.output.data?.status === 404)
-        ) {
-          throw new BlockworkError(
-            'stale_entity_reference',
-            {
-              stage: 'reference_currentness',
-              entity_type: reference.entity_type,
-              entity_id: reference.entity_id,
-              owner_client_id: ownerId,
-              live_block_path: row.path,
-              dependency: index !== 0,
-            },
-            { cause },
-          );
-        }
-
-        throw cause;
       });
     }
   }
@@ -2859,7 +2776,6 @@ async function saveWithMetaBoxes(savePost: () => Promise<void>): Promise<MetaBox
 
 function clearConfirmedSave(session: Context['session']): void {
   session.references = [];
-  session.shared_references = {};
   session.media_references = [];
   session.structure_requires_reload ||= Object.keys(session.requested).some((name) =>
     policyFields.includes(name),

@@ -158,7 +158,7 @@ async function mediaCopyFixture(t, change) {
     if (request.operation === 'prepare_media') {
       const receipt = { key: `receipt-${receipts.length}`, kind: 'media', action: 'create', desired: request.fields, target: request.target };
       receipts.push(receipt);
-      Object.assign(native, { receipt, attempted: false, resource_id: undefined });
+      Object.assign(native, { receipt, attempted: false, verified: false, resource_id: undefined });
       const prepared = { ok: true, persistence: 'not_attempted', receipt };
 
       return change ? change(request, prepared) : prepared;
@@ -173,8 +173,11 @@ async function mediaCopyFixture(t, change) {
     }
 
     const result = { ok: true, persistence: 'verified', resource_id: id, record, receipt: request.receipt };
+    const returned = change ? await change(request, result) : result;
+    // Like the page, record whether its latest write verified.
+    native.verified = returned?.persistence === 'verified';
 
-    return change ? change(request, result) : result;
+    return returned;
   };
 
   const destination = await hostFixture(t, respond);

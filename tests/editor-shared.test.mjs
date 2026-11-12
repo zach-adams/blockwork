@@ -44,7 +44,7 @@ test('shared documents refuse settings and unsynced patterns', async () => {
   assert.equal(f.saves, 0);
 });
 
-test('reference insertion checks identity and currentness before editing and preserves shared content', async () => {
+test('reference insertion checks currentness before editing, and a later entity change does not block the save', async () => {
   const f = referenceFixture();
   const refTarget = { ...target, post_type: 'wp_block', post_id: 77 };
   const referenced = await f.call('inspect_entity', { target: refTarget });
@@ -56,6 +56,7 @@ test('reference insertion checks identity and currentness before editing and pre
 
   assert.equal(edited.ok, true, JSON.stringify(edited));
   const original = f.referenceRecord.content.raw;
+  f.referenceRecord.title.raw = 'Changed after insertion';
   assert.equal((await f.save()).persistence, 'verified');
   assert.equal(f.blocks.at(-1).attributes.ref, 77);
   assert.equal(f.referenceRecord.content.raw, original);
@@ -70,165 +71,6 @@ test('reference insertion checks identity and currentness before editing and pre
 
   assert.equal(plan.error, 'stale_entity_reference', JSON.stringify(plan));
   assert.equal(stale.saves, 0);
-});
-
-test('save rechecks inserted references across edits and revert', async () => {
-  const f = referenceFixture();
-  const refTarget = { ...target, post_type: 'wp_block', post_id: 77 };
-  const inspected = await f.call('inspect_entity', { target: refTarget });
-  await f.call('connect');
-  const inserted = await f.call('edit', { edits: [{ op: 'insert_reference',
-    reference: { entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token } }] });
-  assert.equal(inserted.ok, true, JSON.stringify(inserted));
-  assert.equal((await f.call('edit', { edits: changes })).ok, true);
-  assert.equal((await f.call('revert')).ok, true);
-  await f.call('connect');
-  f.referenceRecord.title.raw = 'Changed';
-  const prepared = await f.call('prepare_save');
-  assert.equal(prepared.error, 'stale_entity_reference', JSON.stringify(prepared));
-  assert.equal(prepared.next, 'inspect_entity_then_reconcile');
-  assert.equal(prepared.diagnostics.stage, 'reference_currentness');
-  assert.deepEqual(copy(prepared.diagnostics.live_block_path), [3]);
-  assert.equal(f.saves, 0);
-});
-
-test('removing an owned reference retires its save check', async () => {
-  const f = referenceFixture();
-  const inspected = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
-  await f.call('connect');
-  const inserted = await f.call('edit', { edits: [{ op: 'insert_reference',
-    reference: { entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token } }] });
-  assert.equal(inserted.ok, true, JSON.stringify(inserted));
-  const removed = await f.call('edit', { edits: [{ op: 'remove', client_id: f.blocks.at(-1).clientId }] });
-  assert.equal(removed.ok, true, JSON.stringify(removed));
-  assert.equal((await f.call('edit', { edits: changes })).ok, true);
-  f.referenceRecord.title.raw = 'Changed';
-  assert.equal((await f.save()).persistence, 'verified');
-});
-
-test('moving an owned reference reports its current path', async () => {
-  const f = referenceFixture();
-  const inspected = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
-  await f.call('connect');
-  assert.equal((await f.call('edit', { edits: [{ op: 'insert_reference',
-    reference: { entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token } }] })).ok, true);
-  const id = f.blocks.at(-1).clientId;
-  const moved = await f.call('edit', { edits: [{ op: 'move', client_id: id, parent: [], index: 0 }] });
-  assert.equal(moved.ok, true, JSON.stringify(moved));
-  f.referenceRecord.title.raw = 'Changed';
-  const prepared = await f.call('prepare_save');
-  assert.equal(prepared.error, 'stale_entity_reference', JSON.stringify(prepared));
-  assert.deepEqual(copy(prepared.diagnostics.live_block_path), [0]);
-});
-
-test('reference replacement retires the old entity but pins the replacement', async () => {
-  for (const staleReplacement of [false, true]) {
-    const f = referenceFixture();
-    const replacement = { ...copy(f.referenceRecord), id: 78 };
-    const baseApi = f.api;
-    f.api = (request) => request.method !== 'OPTIONS' && request.path.startsWith('/wp/v2/blocks/78') ? replacement : baseApi(request);
-    const first = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
-    const second = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 78 } });
-    await f.call('connect');
-    assert.equal((await f.call('edit', { edits: [{ op: 'insert_reference', reference: {
-      entity_type: 'wp_block', entity_id: 77, reference_token: first.reference_token,
-    } }] })).ok, true);
-    const replaced = await f.call('edit', { edits: [{ op: 'update_reference', client_id: f.blocks.at(-1).clientId,
-      reference: { entity_type: 'wp_block', entity_id: 78, reference_token: second.reference_token } }] });
-    assert.equal(replaced.ok, true, JSON.stringify(replaced));
-    f.referenceRecord.title.raw = 'Changed';
-
-    if (staleReplacement) replacement.title.raw = 'Changed replacement';
-    const prepared = await f.call('prepare_save');
-
-    if (staleReplacement) {
-      assert.equal(prepared.error, 'stale_entity_reference', JSON.stringify(prepared));
-      assert.equal(prepared.diagnostics.entity_id, 78);
-    } else assert.equal(prepared.ok, true, JSON.stringify(prepared));
-    assert.equal(f.saves, 0);
-  }
-});
-
-test('removing an ancestor retires its owned reference check', async () => {
-  const f = referenceFixture();
-  const inspected = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
-  await f.call('connect');
-  assert.equal((await f.call('edit', { edits: [{ op: 'insert', block: { name: 'core/group' } }] })).ok, true);
-  const ancestor = f.blocks.at(-1).clientId;
-  const inserted = await f.call('edit', { edits: [{ op: 'insert_reference', parent_client_id: ancestor,
-    reference: { entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token } }] });
-  assert.equal(inserted.ok, true, JSON.stringify(inserted));
-  assert.equal(f.blocks.at(-1).innerBlocks.length, 1);
-  assert.equal((await f.call('edit', { edits: [{ op: 'remove', client_id: ancestor }] })).ok, true);
-  assert.equal((await f.call('edit', { edits: changes })).ok, true);
-  f.referenceRecord.title.raw = 'Changed';
-  assert.equal((await f.save()).persistence, 'verified');
-});
-
-test('removing one reference owner retains another owners shared dependency check', async () => {
-  const f = referenceFixture();
-  const dependency = { ...copy(f.referenceRecord), id: 78 };
-  f.referenceRecord.content.raw = f.window.wp.blocks.serialize([f.window.wp.blocks.createBlock('core/block', { ref: 78 })]);
-  const baseApi = f.api;
-  f.api = (request) => request.method !== 'OPTIONS' && request.path.startsWith('/wp/v2/blocks/78') ? dependency : baseApi(request);
-  const inspected = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
-  await f.call('connect');
-  const reference = { entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token };
-  assert.equal((await f.call('edit', { edits: [{ op: 'insert_reference', reference }] })).ok, true);
-  const firstOwner = f.blocks.at(-1).clientId;
-  assert.equal((await f.call('edit', { edits: [{ op: 'insert_reference', reference }] })).ok, true);
-  const remainingOwner = f.blocks.at(-1).clientId;
-  assert.equal((await f.call('edit', { edits: [{ op: 'remove', client_id: firstOwner }] })).ok, true);
-  dependency.title.raw = 'Changed dependency';
-  const prepared = await f.call('prepare_save');
-  assert.equal(prepared.error, 'stale_entity_reference', JSON.stringify(prepared));
-  assert.equal(prepared.diagnostics.entity_id, 78);
-  assert.equal(prepared.diagnostics.owner_client_id, remainingOwner);
-  assert.equal(prepared.diagnostics.dependency, true);
-  assert.equal(f.saves, 0);
-});
-
-test('a same-identity reference update batched with another edit retains pinned dependencies', async () => {
-  const f = referenceFixture();
-  const dependency = { ...copy(f.referenceRecord), id: 78 };
-  f.referenceRecord.content.raw = f.window.wp.blocks.serialize([f.window.wp.blocks.createBlock('core/block', { ref: 78 })]);
-  const baseApi = f.api;
-  f.api = (request) => request.method !== 'OPTIONS' && request.path.startsWith('/wp/v2/blocks/78') ? dependency : baseApi(request);
-  const inspected = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
-  await f.call('connect');
-  const reference = { entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token };
-  assert.equal((await f.call('edit', { edits: [{ op: 'insert_reference', reference }] })).ok, true);
-  const owner = f.blocks.at(-1).clientId;
-  dependency.title.raw = 'Changed dependency';
-  const edited = await f.call('edit', { edits: [
-    { op: 'update_reference', client_id: owner, reference }, ...changes,
-  ] });
-  assert.equal(edited.ok, true, JSON.stringify(edited));
-  const prepared = await f.call('prepare_save');
-  assert.equal(prepared.error, 'stale_entity_reference', JSON.stringify(prepared));
-  assert.equal(prepared.diagnostics.entity_id, 78);
-  assert.equal(f.saves, 0);
-});
-
-test('a recovered committed reference save clears its checks after reconnect', async () => {
-  const f = referenceFixture();
-  const inspected = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
-  await f.call('connect');
-  assert.equal((await f.call('edit', { edits: [{ op: 'insert_reference', reference: {
-    entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token,
-  } }] })).ok, true);
-  f.interruptSave = true;
-  const lost = await f.save();
-  assert.equal(lost.persistence, 'uncertain', JSON.stringify(lost));
-  f.interruptSave = false;
-  const receipt = (await f.call('status')).receipt;
-  const recovered = await f.call('recover', { target: { site_url: target.site_url, user_id: target.user_id }, receipt });
-  assert.equal(recovered.outcome, 'matched_desired', JSON.stringify(recovered));
-  assert.equal((await f.call('connect')).ok, true);
-  f.referenceRecord.title.raw = 'Changed after persistence';
-  assert.equal((await f.call('edit', { edits: changes })).ok, true);
-  assert.equal((await f.save()).persistence, 'verified');
-  assert.equal(f.saves, 2);
 });
 
 test('generic block insertion and attribute changes cannot bypass reference validation', async () => {

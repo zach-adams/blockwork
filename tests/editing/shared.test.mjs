@@ -156,6 +156,21 @@ test('reference insertion, replacement, removal and stale tokens preserve patter
     });
     await assertRefused(site, id, before, result, { error: 'stale_entity_reference' });
   });
+  // The page stores only the reference, so a later pattern change doesn't block its save.
+  await withDocument(site, { content: paragraph('Anchor') }, async ({ blockwork, id, before }) => {
+    const inspected = await inspect(blockwork, second);
+    const inserted = await blockwork.edit({
+      edits: [{ op: 'insert_reference', reference: reference(second, inspected.reference_token) }],
+    });
+    assert.equal(inserted.ok, true, JSON.stringify(inserted));
+    await site.php(
+      `wp_update_post(['ID' => ${second}, 'post_content' => '${paragraph('Changed pattern')}']);`,
+    );
+    const saved = await blockwork.save();
+    const { after: stored } = await assertSavedCleanly(site, id, before, saved);
+    assert.ok(stored.content.includes(referenceBlock(second)), stored.content);
+    assert.equal((await storedDocument(site, second)).content, paragraph('Changed pattern'));
+  });
 });
 
 test('unsynced patterns are excluded from discovery and recursive references refuse', async () => {
@@ -239,34 +254,6 @@ for (const type of ['wp_template', 'wp_template_part']) {
         await tab.close();
       }
     });
-  });
-}
-
-for (const change of ['content', 'status', 'deleted']) {
-  test(`reference changed after insertion: ${change}`, async () => {
-    const pattern = await seedDocument(site, { type: 'wp_block', content: paragraph('Original') });
-    await withDocument(
-      site,
-      { content: paragraph('Anchor') },
-      async ({ blockwork, id, before }) => {
-        const inspected = await inspect(blockwork, pattern);
-        const result = await blockwork.edit({
-          edits: [
-            { op: 'insert_reference', reference: reference(pattern, inspected.reference_token) },
-          ],
-        });
-        assert.equal(result.ok, true, JSON.stringify(result));
-        const mutation =
-          change === 'content'
-            ? `wp_update_post(['ID' => ${pattern}, 'post_content' => '${paragraph('Changed')}']);`
-            : change === 'status'
-              ? `wp_update_post(['ID' => ${pattern}, 'post_status' => 'draft']);`
-              : `wp_delete_post(${pattern}, true);`;
-        await site.php(mutation);
-        const saved = await blockwork.save();
-        await assertRefused(site, id, before, saved, { error: 'stale_entity_reference' });
-      },
-    );
   });
 }
 

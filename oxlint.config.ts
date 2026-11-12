@@ -32,7 +32,6 @@ export default defineConfig({
     'anti-slop/no-chained-type-assertions': 'error',
     'anti-slop/no-conditional-empty-object-spread': 'error',
     'anti-slop/no-known-value-widening': 'error',
-    'anti-slop/no-module-mocking': 'error',
     'anti-slop/no-object-parameters': 'error',
     'anti-slop/no-reflect-apply': 'error',
     'anti-slop/no-reflect-get': 'error',
@@ -41,8 +40,6 @@ export default defineConfig({
     'anti-slop/no-unknown-type-aliases': 'error',
     'anti-slop/no-unsafe-dictionary-type': 'error',
     'anti-slop/no-widen-then-assert': 'error',
-    // Keep related declarations together instead of upstream's blanket top-level padding.
-    'anti-slop/require-readable-spacing': 'off',
     'readability/statement-spacing': 'error',
     'anti-slop/require-safety-comment-for-type-assertion': 'error',
   },

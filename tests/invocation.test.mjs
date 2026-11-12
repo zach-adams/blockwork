@@ -89,7 +89,7 @@ test('invocation evaluates once, polls a long Promise, and releases the fulfille
   assert.equal(methods.at(-1), 'Runtime.releaseObject');
 });
 
-test('invocation retains an uncertain Promise and redacts browser exceptions', async () => {
+test('invocation releases an uncertain Promise without replay and redacts browser exceptions', async () => {
   const methods = [];
   const result = await callBlockwork({ async send(method) {
     methods.push(method);
@@ -99,12 +99,12 @@ test('invocation retains an uncertain Promise and redacts browser exceptions', a
   } }, 'source', request);
   assert.equal(result.ok, false);
   assert.equal(result.next, 'check_status_do_not_replay');
-  assert.equal(result.diagnostics.job_id, 'job-2');
-  assert.equal(methods.includes('Runtime.releaseObject'), false);
+  assert.equal(methods.filter(m => m === 'Runtime.evaluate').length, 1);
+  assert.equal(methods.at(-1), 'Runtime.releaseObject');
   assert.equal(outsideDebug(result).includes('secret'), false);
 });
 
-test('invocation keeps a settled Promise when result retrieval fails', async () => {
+test('invocation releases a settled Promise when result retrieval fails', async () => {
   const methods = [];
   const result = await callBlockwork({ async send(method) {
     methods.push(method);
@@ -116,11 +116,11 @@ test('invocation keeps a settled Promise when result retrieval fails', async () 
     ] };
     throw new Error('result_transport_failed');
   } }, 'source', request);
-  assert.equal(result.diagnostics.job_id, 'job-unread');
-  assert.equal(methods.includes('Runtime.releaseObject'), false);
+  assert.equal(result.error, 'browser_command_failed');
+  assert.equal(methods.at(-1), 'Runtime.releaseObject');
 });
 
-test('invocation enforces forty-five seconds without replaying or releasing a pending operation', async () => {
+test('invocation enforces forty-five seconds without replaying a pending operation', async () => {
   const compiled = await readFile(new URL('../skills/blockwork/scripts/invoke.mjs', import.meta.url), 'utf8');
   const expression = compiled.replace(/export \{[\s\S]*?\};?\s*$/, '') + '\ncallBlockwork';
   let elapsed = 0;
@@ -136,6 +136,8 @@ test('invocation enforces forty-five seconds without replaying or releasing a pe
       if (method === 'Runtime.evaluate') { evaluations++;
 
         return { result: { objectId: 'job-3' } }; }
+
+      if (method === 'Runtime.releaseObject') return {};
 
       assert.equal(method, 'Runtime.getProperties');
 
@@ -256,7 +258,7 @@ test('preparation failures allow a fresh plan without receipts or uncertain-muta
 
       if (operation === 'prepare_save') assert.match(result.hint, /status\(\) until busy is false/);
       assert.equal(methods.filter(method => method === 'Runtime.evaluate').length, 1);
-      assert.equal(methods.includes('Runtime.releaseObject'), false);
+      assert.equal(methods.includes('Runtime.releaseObject'), stage !== 'start');
     }
   }
 });

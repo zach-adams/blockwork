@@ -135,6 +135,9 @@ persistence. These reads settle the write without claiming the intended change
 succeeded. Inspect that ID for a fresh `edit_token`, then prepare only the
 intended repair with `id` and `fields`. Never replay the old receipt or upload
 again. `next: "inspect_resource"` directs a settled mismatch to this repair.
+`resource_not_prepared` means the receipt was not prepared in this tab or was
+already attempted. It cannot be saved again, even after a settled verification;
+inspect and prepare a fresh receipt for an intended repair.
 
 `verify_do_not_replay` refuses preparation while a write is unresolved. Verify
 its stored receipt and known `resource_id` after the in-flight request ends. An

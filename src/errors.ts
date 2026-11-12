@@ -783,7 +783,7 @@ function repairHint(code: string, operation: string): string {
   }
 
   if (code === 'stale_entity_reference') {
-    return 'Inspect the named entity and read the owning block. Inspection alone does not refresh the pending reference token. Revert the edit if available, or with authorization replace the reference with a different entity or remove and reinsert it in separate edits. Updating the same reference can return no_change.';
+    return 'The referenced entity changed or is no longer published since it was inspected, so this edit applied nothing. Inspect it again with inspect_entity and retry the edit with the fresh reference_token. If it is no longer published, ask the user which entity to use.';
   }
 
   if (code.startsWith('cleanup_')) {

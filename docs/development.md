@@ -48,8 +48,9 @@ where the plugin copy lives. See [setup and performance](integration-fixture.md)
 and [historical native results](history/integration-results.md).
 
 `pnpm test:editing` runs Blockwork calls on real Gutenberg on Playground, and
-`pnpm test:agent` scores natural-language requests through the desktop app. Neither
-runs from `pnpm check` or CI. See [real-editor tests](editing-tests.md) and
+`pnpm test:agent` scores natural-language requests through the desktop app.
+`pnpm check` runs neither, and CI runs only a smoke selection of the real-editor
+tests. See [real-editor tests](editing-tests.md) and
 [their results and open defects](editing-results.md).
 
 `skills/blockwork/scripts/` is generated and ignored by Git. It holds the compiled
@@ -170,8 +171,8 @@ first run after `pnpm compile` reloads the engine and creates a new caller, so
 call `connect` again; the page's session survives. Do not keep the caller itself
 on `state`, since it would keep running the old engine. Use
 `agent-browser --session blockwork-dev` for
-screenshots, viewports, clicks, and new tabs. Receipts and the server log go
-under `$TMPDIR/blockwork-dev/`. Release Blockwork sessions before `stop`.
+screenshots, viewports, clicks, and new tabs. The server log goes under
+`$TMPDIR/blockwork-dev/`. Release Blockwork sessions before `stop`.
 
 To run a second browser beside the first, such as from another worktree, set
 `BLOCKWORK_DEV_SESSION` to a lowercase name on every `start`, `run`, and `stop`.
@@ -389,97 +390,11 @@ operations took 4 to 9 seconds each. Uploads made during a run use absolute
 
 ## Editor operations
 
-The [skill reference list](../skills/blockwork/SKILL.md#references) routes caller
-setup and each operation to its task reference. An agent connects to an editor
-tab once, then reads and edits it directly:
-
-- `connect` confirms the site, signed-in user, and document, and caches them
-  for the page session.
-- `connect` also lists the site's insertable theme and plugin blocks, so agents
-  pick them over rebuilding the same thing from core blocks.
-- `create` starts a new document from an owned wp-admin tab: it opens the
-  type's native editor, waits for the post ID, and connects in one call.
-- `read` returns block outlines, attributes, and native guides from the live
-  editor without network requests, or the blocks and markup of another saved
-  document through this editor's registrations.
-- `edit` validates a batch of up to 32 operations on a copy, applies it through
-  native block actions, verifies the result, and returns the changed client IDs.
-  `update` merges nested attributes. New blocks get the native initialization a
-  user's insertion would; an edit fails only when that stops making progress.
-- `map_links` resolves a copied section's internal links against published
-  destination permalinks. `insert` and `replace` apply its `link_map` beside
-  `media_map`; see [copy sections between sites](../skills/blockwork/references/media.md#copy-sections-between-sites).
-- `view` screenshots a block in the editor canvas at exact desktop widths, in a
-  hidden background tab it resizes itself, or at Gutenberg's tablet and mobile
-  previews, so agents iterate without saving.
-- `measure` reports rendered geometry, chosen computed styles, and failed font
-  loads in the editor canvas, optionally at one of those widths.
-- `capture_page` navigates an agent's own tab to an optional URL and screenshots
-  the saved page at exact
-  widths, without resizing the user's browser. Entrance animations are jumped
-  to their end first, a `selector` is scrolled below fixed bars that would
-  cover it, cookie and consent notices are hidden for the shots and counted
-  in `hidden_notices`, `states` forces CSS interactive states, and `measure` adds
-  front-end element geometry and styles.
-- `save` prepares a receipt, saves once, and verifies a fresh server read
-  and native parse of the stored content.
-  `revert`, `status`, and `release` finish the set.
-
-Both workflows edit the live draft. Background tabs save by default and may
-only save Blockwork's own work. Attached tabs belong to the user: their typing
-elsewhere never blocks an edit, and saving requires explicit whole-document
-intent. Blockwork records what it last read for each block and refuses an edit
-only when someone else changed what that edit depends on. A failed edit rolls
-back when the draft exactly matches a state Blockwork produced; otherwise it
-reports the partial change. Uncertain saves keep their receipt and reconcile
-through `recover`, never a replay. The
-[recovery reference](../skills/blockwork/references/recovery.md) covers failure
-results, host failures, rollbacks, and uncertain saves. Blockwork never resends
-a request; a read-only call that gets no browser result reports
-`next: "retry"`. The browser refuses CDP until the agent reads the `cdp`
-capability documentation, so the setup snippet reads it first.
-
-The packaged references are split by when an agent needs them. A page build
-reads SKILL.md, operations, and styling; recovery, resources, and active
-editors load only for failures, settings and resource work, or a user's open
-editor.
-
-A verified edit beside unsupported content reports `valid: false` and
-`preservation_status: verified_after_read`. This confirms the requested edit and
-unchanged unsupported content without claiming whole-document validity.
-
-The [document and resource reference](../skills/blockwork/references/documents.md)
-covers custom post discovery and creation, title/slug/status/template/parent/order,
-scheduling, featured images, registered REST meta, taxonomy assignments, and
-existing core post-meta bindings. Settings that can change editor policy must
-be saved, and the editor reopened, before structural edits.
-
-Media and term operations use native authenticated REST requests, with separate
-preparation receipts, currentness checks, and one-write recovery. Media supports
-bounded file upload, metadata updates, and inspected attachment values in blocks.
-Terms support search, creation, updates, and explicitly scoped deletion.
-These operations do not require a local helper or an installed WordPress plugin.
-Private ACF fields and PHP binding-registration proofs remain outside the
-browser-only contract. Lost upload acknowledgments require an exact match against
-the same-origin original file bytes; inaccessible or transformed files remain
-uncertain.
-
-Abilities that plugins register through the WordPress Abilities API are listed
-with `inspect_abilities` and run with `run_ability` over the same authenticated
-REST session. The caller states each ability's declared effect, and Blockwork
-refuses a mismatch before sending anything. These runs have no receipt, lock
-check, or verification: a failed or timed-out change is reported as uncertain
-and never replayed. Labels, descriptions, and output are plugin-written site
-data. The Playground fixtures install `tests/fixtures/abilities.php`, which
-copies the gating and input patterns of SEOPress and ACF.
-
-Existing synced patterns, templates, template parts, and navigation use exact
-native identities and explicit shared scope. References use inspected entity
-tokens and remain leaves in the containing document. Recovery can reconcile a
-document or resource receipt in a fresh authenticated admin tab without replaying
-the write. Native checks on a local site cover synced-pattern saving, reference
-insertion, and lost-upload recovery. Template and navigation runtime acceptance
-remains open.
+The [skill](../skills/blockwork/SKILL.md) and the
+[references](../skills/blockwork/SKILL.md#references) it routes to document every
+operation, its request shape, and its recovery. [Editor workflows](editor-workflows.md)
+covers session ownership, currentness, and cleanup. [Feature support](support.md)
+lists coverage and known limits.
 
 The plugin entry point is [plugin.json](../plugin.json). Its workflow lives in
 [skills/blockwork/SKILL.md](../skills/blockwork/SKILL.md).

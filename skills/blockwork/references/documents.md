@@ -193,7 +193,6 @@ settings.fields.title; // one field's REST schema
 settings.fields.meta.properties.my_key; // one registered meta key's schema
 settings.values.meta.my_key; // that key's current value
 settings.taxonomies; // attached REST taxonomies
-settings.schema_token;
 ```
 
 `edit` accepts these beside `edits`, and a settings-only edit may omit `edits`:

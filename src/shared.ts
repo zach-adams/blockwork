@@ -199,12 +199,12 @@ export async function readReference(
   return { name: sharedTypes[reference.entity_type].block, attributes, target: entity, post };
 }
 
-export async function referenceGraph(
+// Refuses recursive, unpublished, or oversized reference graphs before insertion.
+export async function checkReferenceGraph(
   wp: WordPress,
   owner: Target,
   reference: v.InferOutput<typeof ReferenceSchema>,
 ) {
-  const dependencies: Array<v.InferOutput<typeof ReferenceSchema>> = [];
   const visited = new Set<string>();
 
   const walk = async (
@@ -224,7 +224,6 @@ export async function referenceGraph(
     assert(visited.size < 32 && ancestors.length < 15, 'reference_graph_too_large');
     visited.add(key);
     const resolved = await readReference(wp, owner, item);
-    dependencies.push(item);
     const blocks = wp.blocks.parse(resolved.post.content.raw);
     const pending = [...blocks];
     let count = 0;
@@ -286,8 +285,6 @@ export async function referenceGraph(
   };
 
   await walk(reference, []);
-
-  return dependencies;
 }
 
 export async function sharedOperation(request: SharedRequest) {
