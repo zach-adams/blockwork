@@ -378,7 +378,7 @@ function repairHint(code: string, operation: string): string {
     case 'invalid_shared_request':
       return `Check the ${operation} request example in the operation reference and correct the listed paths. Use only documented keys and copy tokens and receipts from successful results.`;
     case 'invalid_ability_request':
-      return "inspect_abilities takes target and an optional name or page. run_ability takes target, name, effect, an optional input, and an optional skip_input_check: true. Copy name and effect (read, write, or destructive) from inspect_abilities, and shape input to that ability's input_schema. Use only those keys.";
+      return "inspect_abilities takes target and an optional name, category, namespace, or page. run_ability takes target, name, effect, an optional input, and an optional skip_input_check: true. Copy name and effect (read, write, or destructive) from inspect_abilities, and shape input to that ability's input_schema. Use only those keys.";
     case 'abilities_api_unavailable':
       return 'This site has no Abilities API route: WordPress is older than 6.9, or something blocks the route. Nothing ran. Report that abilities are unavailable on this site; do not call a plugin REST route or an MCP server in their place.';
     case 'ability_unavailable':

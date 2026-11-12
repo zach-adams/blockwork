@@ -32,9 +32,10 @@ function addQueryArgs(path, args) {
 
 function fixture() {
   const f = { auth: true, requests: [], runs: [], abilities: {
-    'demo/read-info': { label: 'Read info', description: `${'Reads a post. '.repeat(30)}DESCRIPTION-END`,
+    'demo/read-info': { label: 'Read info', description: `${'Reads a post. '.repeat(30)}DESCRIPTION-END`, category: 'demo-content',
       annotations: { readonly: true, destructive: false, idempotent: true },
-      input_schema: { type: 'object', properties: { post_id: { type: 'integer' } }, marker: 'SCHEMA-MARKER' } },
+      input_schema: { type: 'object', properties: { post_id: { type: 'integer' } }, marker: 'SCHEMA-MARKER' },
+      output_schema: { type: 'object', marker: 'OUTPUT-MARKER' } },
     'demo/set-value': { label: 'Set value', description: 'Sets a value.', input_schema: { type: 'object' },
       annotations: { readonly: false, destructive: false, idempotent: false } },
     'demo/replace-meta': { label: 'Replace meta', description: 'Overwrites meta.', input_schema: { type: 'object' },
@@ -179,15 +180,21 @@ test('inspect_abilities lists compact summaries and returns a schema for one nam
     ['demo/undeclared', 'destructive'], ['demo/php-empty', 'destructive'],
   ]);
   assert.deepEqual([list.page, list.may_have_more], [1, false]);
-  assert.deepEqual(Object.keys(list.abilities[0]), ['name', 'label', 'effect', 'description']);
+  assert.deepEqual(Object.keys(list.abilities[0]), ['name', 'label', 'category', 'effect', 'description']);
+  assert.deepEqual([list.abilities[0].category, list.abilities[1].category], ['demo-content', '']);
   assert.equal(list.abilities[0].description.length, 200);
   // The server keeps schemas, and a server that sent them anyway is not relayed.
-  assert.match(f.requests.at(-1).path, /per_page=50&page=1&_fields=name,label,description,meta\.annotations$/);
-  assert.equal(/SCHEMA-MARKER|DESCRIPTION-END/.test(JSON.stringify(list)), false);
+  assert.equal(f.requests.at(-1).path, `${collection}?per_page=50&page=1&_fields=name%2Clabel%2Cdescription%2Ccategory%2Cmeta.annotations`);
+  assert.equal(/SCHEMA-MARKER|OUTPUT-MARKER|DESCRIPTION-END/.test(JSON.stringify(list)), false);
+  await f.call('inspect_abilities', { category: 'demo-content', namespace: 'demo', page: 2 });
+  assert.match(f.requests.at(-1).path, /\?per_page=50&page=2&category=demo-content&namespace=demo&_fields=/);
+  assert.equal((await f.call('inspect_abilities', { namespace: 'Demo/' })).error, 'invalid_ability_request');
 
   const one = await f.call('inspect_abilities', { name: 'demo/read-info' });
   assert.equal(one.ability.effect, 'read');
+  assert.equal(one.ability.category, 'demo-content');
   assert.equal(one.ability.input_schema.marker, 'SCHEMA-MARKER');
+  assert.equal(one.ability.output_schema.marker, 'OUTPUT-MARKER');
   assert.match(one.ability.description, /DESCRIPTION-END$/);
   assert.equal(f.runs.length, 0);
 });

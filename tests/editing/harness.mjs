@@ -37,14 +37,27 @@ const gutenbergSteps = [
 // case seeds its own document, so a failure never leaks into the next case.
 // With acf, the site also runs ACF Pro, which turns on the acf.php field group.
 // With gutenberg, it runs the Gutenberg plugin instead of core's editor.
-export async function startEditingSite({ version = '7.1.4', acf = false, gutenberg = false } = {}) {
+// install names WordPress.org plugins to install inactive, for a case to activate.
+export async function startEditingSite({
+  version = '7.1.4',
+  acf = false,
+  gutenberg = false,
+  install = [],
+} = {}) {
   const fixture = await startFixture(
     false,
     version,
     true,
     await fixturePlugins(),
     acf ? [acfPlugin] : [],
-    gutenberg ? gutenbergSteps : [],
+    [
+      ...(gutenberg ? gutenbergSteps : []),
+      ...install.map((slug) => ({
+        step: 'installPlugin',
+        pluginData: { resource: 'wordpress.org/plugins', slug },
+        options: { activate: false },
+      })),
+    ],
   );
   const session = `blockwork-editing-${randomUUID().slice(0, 8)}`;
   const browserArgs = ['--session', session];
@@ -217,6 +230,20 @@ export async function startEditingSite({ version = '7.1.4', acf = false, gutenbe
     createCaller: (tab) => createBlockwork(tab),
     [Symbol.asyncDispose]: dispose,
   };
+}
+
+const yoast = 'wordpress-seo/wp-seo.php';
+
+// Turns on Yoast SEO from install. Its one-time redirect to a welcome page
+// would otherwise replace the next wp-admin page a case or agent opens.
+export async function setYoast(site, active) {
+  await site.php(`
+    require_once ABSPATH . 'wp-admin/includes/plugin.php';
+    ${active ? `activate_plugin('${yoast}');` : `deactivate_plugins('${yoast}');`}
+    $options = get_option('wpseo', []);
+    $options['should_redirect_after_install_free'] = false;
+    update_option('wpseo', $options);
+  `);
 }
 
 export async function seedDocument(

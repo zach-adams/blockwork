@@ -11,6 +11,7 @@ import {
   seedDocument,
   seedImage,
   serializeNatively,
+  setYoast,
   startEditingSite,
   storedDocument,
   waitFor,
@@ -1457,6 +1458,58 @@ for (const action of ['save_order', 'external_change']) {
     }
   });
 }
+
+// Yoast's meta box would save the title it loaded, so only an editor opened
+// after the ability may save.
+test('an editor opened before a Yoast SEO ability change refuses to save over it', async () => {
+  const yoastSite = await startEditingSite({ install: ['wordpress-seo'] });
+
+  try {
+    await setYoast(yoastSite, true);
+    await withDocument(
+      yoastSite,
+      { content: doc(paragraph('Before')), type: 'post' },
+      async ({ blockwork, id, before, target }) => {
+        const title = 'Blockwork ability title';
+        const stored = () =>
+          yoastSite.php(`echo wp_json_encode(get_post_meta(${id}, '_yoast_wpseo_title', true));`);
+        const change = [
+          { op: 'update', path: [0], name: 'core/paragraph', attributes: { content: 'After' } },
+        ];
+        const run = await blockwork.call({
+          operation: 'run_ability',
+          target: { site_url: yoastSite.site, user_id: yoastSite.fixture.target.user_id },
+          name: 'yoast-seo/update-post-seo-data',
+          effect: 'destructive',
+          input: { post_id: id, seo_title: title },
+        });
+        assert.equal(run.ok, true, JSON.stringify(run));
+        assert.equal(await stored(), title);
+        assert.equal((await blockwork.edit({ edits: change })).ok, true);
+        const refused = await blockwork.save();
+        assert.equal(refused.error, 'saved_record_changed', JSON.stringify(refused));
+        assert.ok(refused.diagnostics.fields.includes('meta._yoast_wpseo_title'), JSON.stringify(refused));
+        assert.equal(await stored(), title);
+        assert.equal((await blockwork.release()).ok, true);
+
+        const tab = await yoastSite.openTab(`${yoastSite.site}/wp-admin/post.php?post=${id}&action=edit`);
+        const fresh = await yoastSite.createCaller(tab);
+
+        try {
+          assert.equal((await fresh.connect({ target, workflow: 'background' })).ok, true);
+          assert.equal((await fresh.edit({ edits: change })).ok, true);
+          await assertSavedCleanly(yoastSite, id, before, await fresh.save(), { allow: ['meta'] });
+          assert.equal(await stored(), title);
+        } finally {
+          await fresh.release().catch(() => undefined);
+          await tab.close().catch(() => undefined);
+        }
+      },
+    );
+  } finally {
+    await yoastSite[Symbol.asyncDispose]();
+  }
+});
 
 test('without the Guidelines experiment the guidelines guide is not enabled', async () => {
   await withDocument(site, { content: doc(paragraph('Body')) }, async ({ blockwork }) => {

@@ -68,7 +68,8 @@ if (chosen.length === 0) {
 await mkdir(out, { recursive: true });
 
 const scratch = await mkdtemp(join(tmpdir(), 'blockwork-agent-'));
-const site = await startEditingSite();
+// Yoast SEO stays inactive until the seo-title task turns it on.
+const site = await startEditingSite({ install: ['wordpress-seo'] });
 const results = [];
 let appStarted = false;
 
@@ -117,7 +118,7 @@ try {
     try {
       const prepared = await task.setup(site);
       const id = prepared.id ?? (await seedDocument(site, prepared));
-      const link = `${site.site}/?page_id=${id}`;
+      const link = `${site.site}/?${prepared.type === 'post' ? 'p' : 'page_id'}=${id}`;
       const before = await storedDocument(site, id);
       const beforeTree = await storedTree(site, id);
       const prompt = `${task.prompt({ link, id, site: site.site, ...prepared })}\n\n${preamble}`;

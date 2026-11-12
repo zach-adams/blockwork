@@ -16,5 +16,5 @@ Results from older desktop runs are historical and do not establish current beha
 | Blank Video and File placeholders | Experimental | Native serialization loses defaults without a media source. [Finding](editing-results.md#visible-limits) |
 | Editing locks and recovery | Experimental | A foreign-lock test had an inconsistent result, and cleanup failed in some older desktop cases. [Result](history/integration-results.md#deferred-plugin-issues) |
 | Site guidelines | Experimental | Reads the Gutenberg plugin's Guidelines experiment, whose storage can still change. [Guide](site-guidelines.md) |
-| WordPress abilities | Experimental | A desktop fixture covered reads and writes; real plugin abilities and WordPress 7.0 were not covered. [Result](history/integration-results.md#abilities-run-on-october-12-2026) |
+| WordPress abilities | Supported | Integration tests run fixture abilities on WordPress 7.0 and 7.1 and Yoast SEO's own abilities, and a desktop agent run used Yoast's ability to turn off its sitemaps. Blockwork can't verify what an ability changed. [Reference](../skills/blockwork/references/shared-and-abilities.md#run-site-abilities) |
 | Multisite and subdirectory installations | Untested | These configurations lack complete coverage. [Coverage](editing-results.md#not-covered) |

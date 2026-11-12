@@ -14,6 +14,7 @@ import {
   seedDocument,
   seedImage,
   serializeNatively,
+  setYoast,
   storedDocument,
 } from '../editing/harness.mjs';
 import { landingPage } from '../editing/pages.mjs';
@@ -1366,6 +1367,54 @@ export const tasks = [
       expect(
         shared.content.includes('Get in touch.') && !shared.content.includes('Contact our team.'),
         'shared text must stay unchanged',
+      );
+    },
+  },
+  // Last, so a run that stops before its check leaves Yoast active for no other task.
+  {
+    id: 'seo-sitemap-off',
+    level: 'simple',
+    source: 'common request',
+    setup: async (site) => {
+      await setYoast(site, true);
+
+      return basic();
+    },
+    // Only Yoast's own ability changes this site setting.
+    prompt: ({ site }) => `Turn off the XML sitemaps that Yoast SEO generates on ${site}.`,
+    allowedPaths: [],
+    check: async ({ site, expect }) => {
+      const enabled = await site.php(
+        "echo wp_json_encode(get_option('wpseo')['enable_xml_sitemap'] ?? null);",
+      );
+      await setYoast(site, false);
+
+      expect(enabled === false, `enable_xml_sitemap is ${JSON.stringify(enabled)}`);
+    },
+  },
+  {
+    id: 'seo-title',
+    level: 'simple',
+    source: 'common request',
+    setup: async (site) => {
+      await setYoast(site, true);
+
+      // A post, because the shared fixture registers look-alike SEO meta on pages.
+      return { ...basic(), type: 'post' };
+    },
+    prompt: ({ link }) =>
+      `Set the SEO title of ${link} to "Blockwork SEO Title" and its meta description to "A page about Blockwork." Leave the page content alone.`,
+    allowedPaths: [],
+    allowMeta: true,
+    check: async ({ site, id, expect }) => {
+      const stored = await site.php(
+        `echo wp_json_encode([get_post_meta(${id}, '_yoast_wpseo_title', true), get_post_meta(${id}, '_yoast_wpseo_metadesc', true)]);`,
+      );
+      await setYoast(site, false);
+
+      expect(
+        JSON.stringify(stored) === JSON.stringify(['Blockwork SEO Title', 'A page about Blockwork.']),
+        `Yoast stored ${JSON.stringify(stored)}`,
       );
     },
   },

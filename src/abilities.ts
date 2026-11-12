@@ -27,6 +27,8 @@ const maximumOutputBytes = 64 * 1024;
 const minimumRunMs = 10000;
 // Core's own ability name rule, which also makes a name safe inside a route.
 const abilityName = v.pipe(v.string(), v.maxLength(200), v.regex(/^[a-z0-9-]+\/[a-z0-9-]+$/));
+// A category slug or an ability name's namespace, as core's list filters take them.
+const abilityGroup = v.pipe(v.string(), v.maxLength(200), v.regex(/^[a-z0-9-]+$/));
 const EffectSchema = v.picklist(['read', 'write', 'destructive']);
 
 type Effect = v.InferOutput<typeof EffectSchema>;
@@ -39,6 +41,8 @@ export const AbilityRequestSchema = v.variant('operation', [
     operation: v.literal('inspect_abilities'),
     target: SiteTargetSchema,
     name: v.optional(abilityName),
+    category: v.optional(abilityGroup),
+    namespace: v.optional(abilityGroup),
     page: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(1)), 1),
   }),
   v.strictObject({
@@ -59,7 +63,9 @@ const AbilitySchema = v.object({
   name: abilityName,
   label: v.optional(v.string(), ''),
   description: v.optional(v.string(), ''),
+  category: v.optional(v.string(), ''),
   input_schema: v.optional(JsonSchema),
+  output_schema: v.optional(JsonSchema),
   meta: v.optional(v.object({ annotations: v.optional(JsonSchema) }), {}),
 });
 
@@ -130,6 +136,7 @@ function summary(ability: Ability, descriptionLimit: number) {
   return {
     name: ability.name,
     label: clip(ability.label, 120),
+    category: clip(ability.category, 120),
     effect: declaredEffect(ability),
     description: clip(ability.description, descriptionLimit),
   };
@@ -203,12 +210,8 @@ async function readAbility(wp: WordPress, name: string, fields: string) {
   return v.parse(AbilitySchema, await api(wp, `${collection}/${name}?_fields=${fields}`));
 }
 
-async function listAbilities(wp: WordPress, page: number) {
-  // Schemas stay on the server until one ability is inspected by name.
-  const records = await api(
-    wp,
-    `${collection}?per_page=${pageSize}&page=${page}&_fields=name,label,description,meta.annotations`,
-  );
+async function listAbilities(wp: WordPress, path: string, page: number) {
+  const records = await api(wp, path);
 
   assert(Array.isArray(records), 'invalid_native_response');
 
@@ -325,18 +328,36 @@ export async function abilityOperation(request: AbilityRequest) {
 
     if (input.operation === 'inspect_abilities') {
       if (input.name === undefined) {
-        return await listAbilities(wp, input.page);
+        const { page, category, namespace } = input;
+        const query: JsonObject = { per_page: pageSize, page };
+
+        if (category) {
+          query.category = category;
+        }
+
+        if (namespace) {
+          query.namespace = namespace;
+        }
+
+        // Schemas stay on the server until one ability is inspected by name.
+        query._fields = 'name,label,description,category,meta.annotations';
+
+        return await listAbilities(wp, url.addQueryArgs(collection, query), page);
       }
 
       const ability = await readAbility(
         wp,
         input.name,
-        'name,label,description,input_schema,meta.annotations',
+        'name,label,description,category,input_schema,output_schema,meta.annotations',
       );
 
       return bounded({
         ok: true,
-        ability: { ...summary(ability, 2000), input_schema: ability.input_schema ?? null },
+        ability: {
+          ...summary(ability, 2000),
+          input_schema: ability.input_schema ?? null,
+          output_schema: ability.output_schema ?? null,
+        },
       });
     }
 

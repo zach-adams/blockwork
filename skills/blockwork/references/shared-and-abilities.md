@@ -82,18 +82,23 @@ REST API, as the signed-in user. Use them for site-specific work no other
 Blockwork operation covers, and only for what the user asked.
 
 ```js
-const { abilities } = await blockwork.call({ operation: "inspect_abilities" });
-const { ability } = await blockwork.call({ operation: "inspect_abilities", name: "wp-rocket/clear-url-cache" });
+const target = { site_url: "https://example.com", user_id: 5 };
+const { abilities } = await blockwork.call({ operation: "inspect_abilities", target });
+const { ability } = await blockwork.call({ operation: "inspect_abilities", target, name: "wp-rocket/clear-url-cache" });
 const result = await blockwork.call({
-  operation: "run_ability", name: ability.name, effect: ability.effect,
+  operation: "run_ability", target, name: ability.name, effect: ability.effect,
   input: { url: "https://example.com/pricing/" },
 });
 ```
 
 `inspect_abilities` returns up to 50 abilities per `page` as `name`, `label`,
-`effect`, and the first 200 characters of `description`; `may_have_more` flags
-another page. With `name` it returns one `ability` with its description and
-`input_schema`. `effect` comes from the annotations the plugin declared:
+`category`, `effect`, and the first 200 characters of `description`;
+`may_have_more` flags another page. `category` or `namespace`, the part of a
+name before the slash, narrows the list to one plugin's abilities, as in
+`namespace: "yoast-seo"`. With `name` it returns one `ability` with its full
+description, `input_schema`, and `output_schema`, the shape of a successful
+run's `output`, or `null` when the plugin declared none. `effect` comes from the
+annotations the plugin declared:
 
 | `effect` | Declared as | Meaning |
 | --- | --- | --- |
@@ -138,8 +143,13 @@ confirming with the user first; it never authorizes more than the user asked.
 Ability changes are outside Blockwork's guarantees. There is no preparation,
 receipt, lock check, or verification, and the effect is the plugin's own claim.
 An ability can change a document an editor has open, so do not run one that
-writes a document while that document has unsaved editor work, and connect again
-before editing a document an ability changed.
+writes a document while that document has unsaved editor work. An editor opened
+before the run still holds the old values in plugin panels, such as an SEO
+plugin's fields, and saving it would write them back. Blockwork refuses that save
+with `saved_record_changed` when it can see the changed field. Edit the document
+afterward only in an editor opened after the run: release a background tab and
+open a fresh one, and tell a user whose editor was open to copy out unsaved work
+and reload it before saving.
 
 Every failure reports `persistence`. `not_attempted` means nothing changed: the
 failure came before the run was sent, or the run was a `read`.

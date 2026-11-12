@@ -89,9 +89,12 @@ field groups and an ACF block, and does nothing on sites without ACF.
 
 `startEditingSite({ gutenberg: true })` installs the latest Gutenberg release
 from WordPress.org and turns on its Guidelines experiment, so that site runs the
-plugin's editor instead of core's. It needs network access when the site boots.
-Only the Guidelines case in `plugins` uses it; see
-[site guidelines](site-guidelines.md#keep-up-with-gutenberg).
+plugin's editor instead of core's. Only the Guidelines case in `plugins` uses it;
+see [site guidelines](site-guidelines.md#keep-up-with-gutenberg).
+`install: ['wordpress-seo']` installs the latest releases of the named
+WordPress.org plugins without activating them, and a case turns its plugin on and
+off, as `setYoast` does. The agent suite's site installs Yoast SEO this way for its
+`seo-` tasks. Both options need network access when the site boots.
 
 Select a file, finding, or case when working on a fix. Combine selectors to run
 only their intersection. A finding may cover more than one case.
