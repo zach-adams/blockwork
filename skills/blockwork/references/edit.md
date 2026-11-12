@@ -69,6 +69,7 @@ recovery.
 | `insert_variation` | block `name`, registered `variation`, optional `attributes`; optional destination and `index` |
 | `set_block_style` | target, registered `style` name, or `null` to clear |
 | `insert_reference`, `update_reference` | shared `reference`; see [shared documents](shared-and-abilities.md#shared-documents-and-references) |
+| `detach_reference` | target of a synced `core/block` reference; replaces it with static blocks, preserving instance overrides; see [detach a pattern](shared-and-abilities.md#detach-a-pattern-in-one-document) |
 
 A target is `client_id` or `path`; an optional `name` must match. A destination
 is `parent_client_id` or `parent` (a path); omit both for the document root.

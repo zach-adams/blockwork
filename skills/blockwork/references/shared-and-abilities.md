@@ -24,9 +24,10 @@ shared `edit` requires a literal scope: `scope: "all_references"` for
 `wp_block`, because edits affect every use, and `scope: "site_wide"` for
 templates, template parts, and navigation. Get authorization for that scope; a
 request to change one page does not authorize changing its shared pattern or
-site template. Shared operations edit content only and keep status and other
-settings. Creating or deleting shared entities, detaching patterns, and Global
-Styles are out of scope. Editing a file-backed template creates a database
+site template. Shared operations keep status and other settings, except synced
+patterns also accept `post.title` and first publication from an auto-draft as
+described below. Deleting shared entities, creating or detaching template parts
+and navigation, and Global Styles are out of scope. Editing a file-backed template creates a database
 override (`entity.source`, `origin`, `has_theme_file`, and `wp_id` report it);
 it never writes a theme or plugin file.
 
@@ -72,6 +73,87 @@ Blockwork checks the token only when it inserts or updates the reference. The
 page stores just the reference, so a later change to the entity doesn't block
 the page's save. On `stale_entity_reference`, follow
 [reference repair](recovery.md#stale-shared-references).
+
+### Create a synced pattern from document blocks
+
+Creating the pattern and replacing the original blocks are separate saves. A
+request to make a section reusable authorizes both. Finish and verify the pattern
+save before removing anything from the source document.
+
+1. Read the source blocks with `read({ blocks: { client_id, markup: true } })`.
+   Keep their client IDs, parent, and insertion index. Choose valid blocks whose
+   registrations allow `reusable`; blocks with a registered `parent` default to
+   disallowing reuse. Native insertion policy must allow `core/block` at the
+   source location. Keep the source unchanged if either condition fails.
+2. Bind a fresh caller to a new owned wp-admin tab, then call
+   `create({ target: { site_url, user_id }, post_type: "wp_block" })`. Discovery
+   checks native permission to create patterns before opening the auto-draft.
+   Other shared types cannot be created this way. Keep the source caller open.
+3. On the new caller, insert the copied markup and supply the title and publication
+   status in the same edit:
+
+   ```js
+   await pattern.edit({
+     scope: "all_references",
+     post: { title: "Reusable CTA", status: "publish" },
+     edits: [{ op: "insert", markup: section.markup }],
+   });
+   const saved = await pattern.save();
+   ```
+
+   Creation requires a nonempty title and `publish`; omit slug, settings, and sync
+   metadata. WordPress generates the slug, and Blockwork verifies it through the
+   existing receipt. New pattern roots must pass native reusable support and
+   validity checks. Invalid markup refuses before editing. Existing synced
+   patterns accept title changes but no status changes. `pattern_creation_fields_required`
+   names missing first-save fields; `pattern_block_not_reusable` names the edit
+   index, target path, and block. Correct those requests without touching the
+   source blocks. A refused auto-draft may remain on the site; report its identity.
+4. Require `saved.persistence === "verified"`, record the new `document` identity
+   returned by `create`, release the pattern caller, and close its owned tab.
+   After a lost save response, use its receipt with `recover`; never repeat create
+   or replay an uncertain save.
+5. In the source caller, use `inspect_entity` on the new `wp_block` identity to
+   get its `reference_token`. In one `edit`, remove the original blocks by their
+   read client IDs and `insert_reference` at their original parent and index.
+   Save and release according to the source workflow. Reference insertion checks
+   native policy at that location. A refusal applies none of that batch, so keep
+   the source and report the separately created pattern. Do not create another.
+
+Unsynced patterns remain unsupported. This flow returns ordinary `create`,
+`edit`, `save`, and `release` results and uses their normal recovery rules.
+
+### Detach a pattern in one document
+
+Read the reference, then edit the document containing it:
+
+```js
+const result = await blockwork.edit({
+  edits: [{ op: "detach_reference", client_id: reference_client_id }],
+});
+```
+
+The target accepts `client_id` or `path`, with optional matching `name`, just as
+other edit targets do. It must be `core/block` referencing a synced `wp_block`.
+No entity token is required. This edits only this document's reference, so it
+needs no shared scope unless the containing document is itself shared.
+
+Detach copies the pattern's current edited entity blocks when loaded, otherwise
+its edited or stored content. It does not need the reference's canvas to load.
+Registered attributes receive the instance's named content overrides. Every
+copied block loses `metadata.id` and `metadata.bindings`; empty metadata drops,
+and other metadata stays. The pattern's content and other uses stay unchanged.
+Pending edits to the shared pattern stay pending; detach does not save them.
+
+The normal planner checks removal and insertion permissions and verifies the
+static blocks. `changed` reports their client IDs and paths so further edits can
+target them. `revert` restores the original reference while its guarded result
+is unchanged. Save through the containing document's normal workflow.
+`detach_pattern_required` identifies a wrong reference type;
+`detach_pattern_unsupported` refuses invalid or unsupported pattern content.
+Read the document and inspect the pattern to correct either refusal. Native
+locks and insertion failures follow ordinary edit recovery. A lost edit response
+requires `status`, never replay; a lost save response requires receipt recovery.
 
 ## Run site abilities
 

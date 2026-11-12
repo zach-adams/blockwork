@@ -51,7 +51,8 @@ const doc = await blockwork.create({
 
 These are the complete required keys. `site_url` is the exact WordPress
 installation URL, `user_id` is the signed-in user's positive integer ID, and
-`post_type` is a REST-visible type with editor support. There are no workflow,
+`post_type` is a REST-visible type with editor support, including `wp_block`
+for synced patterns. Other `wp_*` types remain excluded. There are no workflow,
 content, title, or timeout options. The caller discovers the type's native
 `new_editor_url`, navigates only its bound tab, waits up to 10 seconds for a
 positive post ID and that exact type, then connects with
@@ -90,6 +91,14 @@ affects editor policy, so the same tab can add structure before saving. With new
 content, save a draft with it, then publish through a final status-only edit and
 save if authorized. Do not publish an empty intermediate document. Release and
 close the owned tab when finished.
+
+Synced patterns use a narrower first-save request with `scope: "all_references"`
+and `post: { title: "Reusable CTA", status: "publish" }` alongside their content.
+Omit slug and settings. WordPress generates a pattern slug; duplicate titles are
+allowed. This exception applies only to a `wp_block` auto-draft. Published patterns
+accept title edits, but no status changes or other settings. Follow
+[pattern creation](shared-and-abilities.md#create-a-synced-pattern-from-document-blocks)
+to replace the source section only after the pattern save verifies.
 
 Save a draft once the first structure is in place. A draft save publishes
 nothing, and unsaved editor work is lost if the turn is interrupted or the

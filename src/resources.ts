@@ -20,6 +20,7 @@ import {
   RouteSchema,
   route,
   routeLabel,
+  timedRequest,
   validateFields,
   writableFields,
 } from './native';
@@ -921,6 +922,16 @@ async function discoverDocuments(
 
   const type = available.find((item) => item.slug === input.post_type);
   assert(type, 'unsupported_post_type');
+
+  if (type.slug === 'wp_block') {
+    const allowed = await timedRequest('core/canUser', budgetedMs(12000), async () =>
+      wp.data.resolveSelect?.('core').canUser?.('create', { kind: 'postType', name: 'wp_block' }),
+    );
+    assert(allowed === true, 'pattern_creation_forbidden', {
+      capability: 'create',
+      post_type: 'wp_block',
+    });
+  }
 
   const records = await api(
     wp,

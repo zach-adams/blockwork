@@ -2561,16 +2561,22 @@ async function prepareSave(context: Context, saveAllPending?: boolean): Promise<
   }
 
   if (session.persisted.status === 'auto-draft') {
+    const pattern = context.target.post_type === 'wp_block';
     assert(
-      ['title', 'slug', 'status'].every((name) => requestedNames.has(name)),
-      'creation_fields_required',
+      (pattern ? ['title', 'status'] : ['title', 'slug', 'status']).every((name) =>
+        requestedNames.has(name),
+      ),
+      pattern ? 'pattern_creation_fields_required' : 'creation_fields_required',
     );
-    const slug = String(context.livePost().slug);
-    const duplicates = await api(
-      wp,
-      `${session.schema.collection}?context=edit&status=any&slug=${encodeURIComponent(slug)}&per_page=2`,
-    );
-    assert(Array.isArray(duplicates) && duplicates.length === 0, 'slug_already_exists');
+
+    if (!pattern) {
+      const slug = String(context.livePost().slug);
+      const duplicates = await api(
+        wp,
+        `${session.schema.collection}?context=edit&status=any&slug=${encodeURIComponent(slug)}&per_page=2`,
+      );
+      assert(Array.isArray(duplicates) && duplicates.length === 0, 'slug_already_exists');
+    }
   }
 
   if (session.workflow === 'background') {

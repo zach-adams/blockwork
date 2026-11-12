@@ -505,13 +505,14 @@ function repairHint(code: string, operation: string): string {
     case 'unsupported_pending_settings':
     case 'unsupported_settings_document':
       return 'The requested field, metadata, or pending settings are absent or not supported for a native write in this document. Inspect its writable settings schema and pending work. Retain unavailable or private fields; do not erase pending edits or invent a schema.';
+    case 'shared_content_only':
+      return 'Shared documents accept content edits only, except wp_block accepts post.title. Only its auto-draft also accepts post.status publish. Omit other post fields, settings, and binding_writes. Read references/shared-and-abilities.md before planning another edit.';
     case 'unsupported_post_type':
     case 'unsupported_rest_route':
     case 'unsupported_taxonomy':
     case 'taxonomy_not_attached':
     case 'taxonomy_required':
     case 'shared_entity_required':
-    case 'shared_content_only':
     case 'shared_descendant_not_editable':
       return 'The requested native document, shared entity, REST route, or taxonomy is unsupported or not editable in this context. Use discover or inspect_entity for the exact target and its allowed fields and scope. Do not guess a route, change a shared identity, or bypass content-only restrictions.';
     case 'invalid_resource_identity':
@@ -762,6 +763,16 @@ function repairHint(code: string, operation: string): string {
     case 'creation_fields_required':
     case 'slug_already_exists':
       return 'Inspect existing records and create with the required identity fields, an explicit status for documents, and a unique requested slug. Never invent a replacement slug or repeat an uncertain creation.';
+    case 'pattern_creation_fields_required':
+      return 'Before the first synced-pattern save, edit with scope all_references, a nonempty post.title, and post.status publish together with its content. Omit slug and settings. Never repeat an uncertain create or save; inspect status or recover the receipt.';
+    case 'pattern_creation_forbidden':
+      return 'The signed-in user cannot create wp_block records. Use an authorized account with native pattern creation permission, then discover wp_block again before create. No editor was opened.';
+    case 'pattern_block_not_reusable':
+      return 'The block at diagnostics.target_path cannot become a synced pattern under its native reusable support or validity rules. Keep it in the source document and choose a reusable section. Inspect the block registration before creating another pattern.';
+    case 'detach_pattern_required':
+      return 'detach_reference requires an existing core/block reference to a synced wp_block. Read the document and select that reference client_id. Template parts and navigation cannot be detached.';
+    case 'detach_pattern_unsupported':
+      return 'The synced pattern contains invalid or unsupported blocks. Inspect its content in the pattern editor and repair it through native controls before detaching. The reference and shared content remain unchanged.';
     case 'future_date_required':
       return 'Scheduling requires post.status future and an explicit valid future post.date_gmt in YYYY-MM-DDTHH:mm:ss UTC form. Confirm the intended time before preparing.';
     case 'unmapped_media_url':

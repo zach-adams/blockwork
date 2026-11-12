@@ -35,10 +35,12 @@ for (const [type, identity, scope] of [['wp_block', 7, 'all_references'], ['wp_n
   });
 }
 
-test('shared documents refuse settings and unsynced patterns', async () => {
+test('shared documents allow pattern titles and refuse settings and unsynced patterns', async () => {
   const f = sharedFixture();
   await f.call('connect');
-  assert.equal((await f.call('edit', { edits: changes, scope: 'all_references', post: { title: 'No' } })).error, 'shared_content_only');
+  assert.equal((await f.call('edit', { edits: changes, scope: 'all_references', post: { title: 'Pattern title' } })).ok, true);
+  assert.equal((await f.call('edit', { scope: 'all_references', post: { status: 'draft' } })).error, 'shared_content_only');
+  assert.equal((await f.call('edit', { scope: 'all_references', settings: { meta: {} } })).error, 'shared_content_only');
   f.post.wp_pattern_sync_status = 'unsynced';
   assert.equal((await f.call('connect')).error, 'pattern_not_synced');
   assert.equal(f.saves, 0);
@@ -383,4 +385,213 @@ test('shared discovery and recovery normalize revoked authentication', async () 
     ['reauthorization_required', 'uncertain', 'inspect_do_not_replay'], JSON.stringify(signedOut));
   assert.equal(f.requests.length, requests);
   assert.equal(f.saves, 0);
+});
+
+function patternDraft() {
+  const f = sharedFixture();
+  f.post.status = 'auto-draft';
+  f.post.slug = '';
+  f.post.title.raw = '';
+  f.blocks = [];
+  f.syncContent();
+
+  return f;
+}
+
+test('new synced patterns publish title and content without a requested slug', async () => {
+  const f = patternDraft();
+  assert.equal((await f.call('connect')).ok, true);
+  const missing = await f.save();
+  assert.equal(missing.error, 'pattern_creation_fields_required', JSON.stringify(missing));
+  assert.match(missing.hint, /post.title/);
+  const edited = await f.call('edit', { scope: 'all_references', post: { title: 'Reusable CTA', status: 'publish' }, edits: [{ op: 'insert', block: { name: 'core/paragraph', attributes: { content: 'Call us' } } }] });
+  assert.equal(edited.ok, true, JSON.stringify(edited));
+  assert.equal((await f.save()).persistence, 'verified');
+  assert.equal(f.post.title.raw, 'Reusable CTA');
+  assert.equal(f.post.status, 'publish');
+  assert.equal((await f.call('edit', { scope: 'all_references', post: { status: 'publish' } })).error, 'shared_content_only');
+});
+
+test('new patterns refuse missing title, non-reusable roots and implicit parent reuse before mutation', async () => {
+  for (const post of [{ title: 'Title' }, { status: 'publish' }, { title: ' ', status: 'publish' }]) {
+    const f = patternDraft();
+    await f.call('connect');
+    const result = await f.call('edit', { scope: 'all_references', post });
+    assert.equal(result.error, 'pattern_creation_fields_required', JSON.stringify(result));
+    assert.equal(f.dirty, false);
+  }
+
+  for (const registration of [{ supports: { reusable: false } }, { parent: ['core/group'] }]) {
+    const f = patternDraft();
+    Object.assign(f.registrations['core/paragraph'], registration);
+    await f.call('connect');
+    const result = await f.call('edit', { scope: 'all_references', post: { title: 'Title', status: 'publish' }, edits: [{ op: 'insert', block: { name: 'core/paragraph' } }] });
+    assert.equal(result.error, 'pattern_block_not_reusable', JSON.stringify(result));
+    assert.equal(result.diagnostics.edit_index, 0);
+    assert.match(result.hint, /native reusable/);
+    assert.equal(f.blocks.length, 0);
+    assert.equal(f.dirty, false);
+    assert.equal(f.saves, 0);
+  }
+});
+
+function detachable() {
+  const f = referenceFixture();
+  f.registrations['core/paragraph'].attributes.metadata = { type: 'object' };
+  f.registrations['core/block'].attributes.content = { type: 'object' };
+  const wp = f.window.wp;
+  f.referenceRecord.content.raw = wp.blocks.serialize([
+    wp.blocks.createBlock('core/paragraph', { content: 'Default', metadata: { name: 'Question', id: 'binding-id', bindings: { content: { source: 'core/pattern-overrides' } } } }),
+    wp.blocks.createBlock('core/paragraph', { content: 'Second', metadata: { id: 'other-id', bindings: {} } }),
+  ]);
+  f.blocks.splice(0, f.blocks.length, wp.blocks.createBlock('core/block', { ref: 77, content: { Question: { content: 'Instance', unregistered: 'Ignored' } } }));
+  f.syncContent();
+
+  return f;
+}
+
+test('detach replaces an unloaded reference with overridden static blocks and supports revert', async () => {
+  const f = detachable();
+  const original = f.referenceRecord.content.raw;
+  const referenceId = f.blocks[0].clientId;
+  await f.call('connect');
+  const result = await f.call('edit', { edits: [{ op: 'detach_reference', client_id: referenceId }] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.changed.length, 2);
+  assert.deepEqual(copy(f.blocks[0].attributes), { content: 'Instance', metadata: { name: 'Question' } });
+  assert.equal(f.blocks[1].attributes.metadata, undefined);
+  assert.equal(f.referenceRecord.content.raw, original);
+  assert.equal((await f.call('revert')).ok, true);
+  assert.equal(f.blocks[0].clientId, referenceId);
+  assert.equal(f.blocks[0].attributes.ref, 77);
+  const again = await f.call('edit', { edits: [{ op: 'detach_reference', client_id: referenceId }] });
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.equal((await f.save()).persistence, 'verified');
+  assert.equal(f.referenceRecord.content.raw, original);
+});
+
+test('detach uses live edited pattern blocks and does not mutate their attributes', async () => {
+  const f = detachable();
+  const source = f.window.wp.blocks.parse(f.referenceRecord.content.raw);
+  source[1].attributes.content = 'Live pending content';
+  f.editedReference = { blocks: source, content: f.referenceRecord.content.raw };
+  const before = copy(source);
+  await f.call('connect');
+  const result = await f.call('edit', { edits: [{ op: 'detach_reference', client_id: f.blocks[0].clientId }] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(f.blocks[1].attributes.content, 'Live pending content');
+  assert.deepEqual(copy(source), before);
+});
+
+test('detach refuses non-pattern references, invalid pattern content and native removal locks', async () => {
+  for (const name of ['core/paragraph', 'core/navigation', 'core/template-part']) {
+    const f = detachable();
+    f.registrations[name] ??= { name, attributes: { ref: { type: 'number' } } };
+    f.blocks[0].name = name;
+
+    if (name === 'core/paragraph') f.blocks[0].attributes = { content: 'Plain' };
+    f.syncContent();
+    await f.call('connect');
+    const result = await f.call('edit', { edits: [{ op: 'detach_reference', client_id: f.blocks[0].clientId }] });
+    assert.equal(result.error, 'detach_pattern_required', JSON.stringify(result));
+    assert.match(result.hint, /core\/block/);
+    assert.equal(f.saves, 0);
+  }
+
+  const invalid = detachable();
+  invalid.editedReference = { blocks: [{ name: 'core/paragraph', attributes: { content: 'Bad' }, innerBlocks: [], clientId: 'invalid', isValid: false }], content: '' };
+  await invalid.call('connect');
+  const refused = await invalid.call('edit', { edits: [{ op: 'detach_reference', client_id: invalid.blocks[0].clientId }] });
+  assert.equal(refused.error, 'detach_pattern_unsupported', JSON.stringify(refused));
+  assert.equal(invalid.blocks[0].name, 'core/block');
+  const locked = detachable();
+  locked.blocks[0].attributes.lock = { remove: true };
+  locked.syncContent();
+  await locked.call('connect');
+  const result = await locked.call('edit', { edits: [{ op: 'detach_reference', client_id: locked.blocks[0].clientId }] });
+  assert.equal(result.error, 'block_locked', JSON.stringify(result));
+  assert.equal(locked.blocks[0].name, 'core/block');
+});
+
+test('pattern discovery includes only the supported shared create type and checks create permission', async () => {
+  for (const allowed of [true, false]) {
+    const f = sharedFixture();
+    f.resolveCanUser = async (action, resource) => action === 'create' && resource.name === 'wp_block' && allowed;
+    f.api = ({ path }) => path === '/wp/v2/types?context=edit'
+      ? Object.fromEntries(['wp_block', 'wp_navigation', 'wp_template', 'wp_template_part'].map((slug) => [slug, { slug, rest_namespace: 'wp/v2', rest_base: slug === 'wp_block' ? 'blocks' : slug, supports: { editor: true } }]))
+      : path.startsWith('/wp/v2/blocks?') ? [] : undefined;
+    const site = { site_url: target.site_url, user_id: target.user_id };
+    const types = await f.call('discover', { target: site });
+    assert.equal(types.ok, true, JSON.stringify(types));
+    assert.deepEqual(copy(types.types).map((type) => type.name), ['wp_block']);
+    const discovered = await f.call('discover', { target: site, post_type: 'wp_block' });
+    assert.equal(discovered.ok, allowed, JSON.stringify(discovered));
+
+    if (allowed) assert.match(discovered.new_editor_url, /post-new.php\?post_type=wp_block$/);
+    else {
+      assert.equal(discovered.error, 'pattern_creation_forbidden');
+      assert.equal(discovered.diagnostics.capability, 'create');
+      assert.match(discovered.hint, /authorized account/);
+    }
+
+    const unsupported = await f.call('discover', { target: site, post_type: 'wp_template_part' });
+    assert.equal(unsupported.error, 'invalid_resource_request');
+    assert.equal(f.saves, 0);
+  }
+});
+
+test('template parts and navigation retain their content-only settings rule', async () => {
+  for (const type of ['wp_template', 'wp_template_part', 'wp_navigation']) {
+    const f = sharedFixture(type, type === 'wp_navigation' ? 7 : 'theme//part');
+    await f.call('connect');
+    const result = await f.call('edit', { scope: 'site_wide', post: { title: 'Refused title' } });
+    assert.equal(result.error, 'shared_content_only', JSON.stringify(result));
+    assert.equal(f.dirty, false);
+  }
+});
+
+test('a forbidden pattern reference destination refuses the whole source replacement batch', async () => {
+  const f = referenceFixture();
+  const inspected = await f.call('inspect_entity', { target: { ...target, post_type: 'wp_block', post_id: 77 } });
+  await f.call('connect');
+  const before = copy(f.blocks);
+  const store = f.window.wp.data.select('core/block-editor');
+  const canInsert = store.canInsertBlockType;
+  store.canInsertBlockType = (name, root) => name !== 'core/block' && canInsert(name, root);
+  const result = await f.call('edit', { edits: [
+    { op: 'remove', client_id: f.blocks[0].clientId },
+    { op: 'insert_reference', index: 0, reference: { entity_type: 'wp_block', entity_id: 77, reference_token: inspected.reference_token } },
+  ] });
+  assert.equal(result.error, 'insertion_refused', JSON.stringify(result));
+  assert.equal(result.diagnostics.edit_index, 1);
+  assert.deepEqual(copy(f.blocks), before);
+  assert.equal(f.dirty, false);
+});
+
+test('detach recursively strips bindings and applies named overrides without saving the source', async () => {
+  const f = detachable();
+  const wp = f.window.wp;
+  f.registrations['core/group'] = { name: 'core/group', attributes: { metadata: { type: 'object' } } };
+  const nested = wp.blocks.createBlock('core/group', { metadata: { id: 'outer', bindings: {} } }, wp.blocks.parse(f.referenceRecord.content.raw));
+  f.referenceRecord.content.raw = wp.blocks.serialize([nested]);
+  const source = f.referenceRecord.content.raw;
+  await f.call('connect');
+  const result = await f.call('edit', { edits: [{ op: 'detach_reference', client_id: f.blocks[0].clientId }] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(f.blocks[0].name, 'core/group');
+  assert.equal(f.blocks[0].attributes.metadata, undefined);
+  assert.equal(f.blocks[0].innerBlocks[0].attributes.content, 'Instance');
+  assert.deepEqual(copy(f.blocks[0].innerBlocks[0].attributes.metadata), { name: 'Question' });
+  assert.equal(f.blocks[0].innerBlocks[1].attributes.metadata, undefined);
+  assert.equal(f.referenceRecord.content.raw, source);
+  assert.equal(f.saves, 0);
+});
+
+test('detach validates its selector before acquiring an editor session', async () => {
+  const f = referenceFixture();
+  const result = await f.call('edit', { edits: [{ op: 'detach_reference' }] });
+  assert.equal(result.error, 'invalid_edit', JSON.stringify(result));
+  assert.equal(result.issues[0].path, 'edits.0.client_id');
+  assert.equal(f.window.__blockwork_editor, undefined);
+  assert.equal(f.pulses, 0);
 });

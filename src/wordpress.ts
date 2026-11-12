@@ -284,6 +284,7 @@ export interface WordPress {
         }
       | undefined;
     getBlockType(name: string): Registration | undefined;
+    hasBlockSupport(name: string, feature: string, defaultValue?: boolean): boolean;
     getBlockTypes(): Registration[];
     isUnmodifiedDefaultBlock?(block: Block): boolean;
     getBlockVariations?(name: string, scope: string): Variation[];
