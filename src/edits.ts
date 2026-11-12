@@ -1811,7 +1811,11 @@ async function detachPattern(wp: WordPress, target: Target, block: Block): Promi
     'detach_pattern_required',
   );
   const id = Number(block.attributes.ref);
-  const post = v.parse(PostSchema, await postRecord(wp, '/wp/v2/blocks', id));
+  // Patterns send raw content in view context, so an author can detach one
+  // they can read but not edit, as Gutenberg's own block does. Other text
+  // fields there are rendered only, so they stay out.
+  const fields = ['id', 'type', 'status', 'slug', 'content', 'meta', 'wp_pattern_sync_status'];
+  const post = v.parse(PostSchema, await postRecord(wp, '/wp/v2/blocks', id, fields, 'view'));
   checkSharedRecord(post, { ...target, post_type: 'wp_block', post_id: id });
   // A background reference may never mount; core-data still holds live pattern edits.
   const edited = wp.data.select('core').getEditedEntityRecord?.('postType', 'wp_block', id);

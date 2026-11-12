@@ -461,6 +461,8 @@ test('detach replaces an unloaded reference with overridden static blocks and su
   assert.deepEqual(copy(f.blocks[0].attributes), { content: 'Instance', metadata: { name: 'Question' } });
   assert.equal(f.blocks[1].attributes.metadata, undefined);
   assert.equal(f.referenceRecord.content.raw, original);
+  // An author can read another user's published pattern only in view context.
+  assert.ok(f.requests.some(({ path }) => path.startsWith('/wp/v2/blocks/77?context=view&_fields=')), JSON.stringify(f.requests));
   assert.equal((await f.call('revert')).ok, true);
   assert.equal(f.blocks[0].clientId, referenceId);
   assert.equal(f.blocks[0].attributes.ref, 77);
@@ -514,12 +516,15 @@ test('detach refuses non-pattern references, invalid pattern content and native 
 });
 
 test('pattern discovery includes only the supported shared create type and checks create permission', async () => {
-  for (const allowed of [true, false]) {
+  for (const allow of ['GET, POST', 'GET', null]) {
+    const allowed = allow === 'GET, POST';
     const f = sharedFixture();
-    f.resolveCanUser = async (action, resource) => action === 'create' && resource.name === 'wp_block' && allowed;
-    f.api = ({ path }) => path === '/wp/v2/types?context=edit'
-      ? Object.fromEntries(['wp_block', 'wp_navigation', 'wp_template', 'wp_template_part'].map((slug) => [slug, { slug, rest_namespace: 'wp/v2', rest_base: slug === 'wp_block' ? 'blocks' : slug, supports: { editor: true } }]))
-      : path.startsWith('/wp/v2/blocks?') ? [] : undefined;
+    // WordPress lists the methods this user may send, the header core-data's canUser reads.
+    f.api = ({ path, method, parse }) => method === 'OPTIONS' && path === '/wp/v2/blocks' && parse === false
+      ? new Response('{}', { headers: allow === null ? {} : { allow } })
+      : path === '/wp/v2/types?context=edit'
+        ? Object.fromEntries(['wp_block', 'wp_navigation', 'wp_template', 'wp_template_part'].map((slug) => [slug, { slug, rest_namespace: 'wp/v2', rest_base: slug === 'wp_block' ? 'blocks' : slug, supports: { editor: true } }]))
+        : path.startsWith('/wp/v2/blocks?') ? [] : undefined;
     const site = { site_url: target.site_url, user_id: target.user_id };
     const types = await f.call('discover', { target: site });
     assert.equal(types.ok, true, JSON.stringify(types));
@@ -528,6 +533,7 @@ test('pattern discovery includes only the supported shared create type and check
     assert.equal(discovered.ok, allowed, JSON.stringify(discovered));
 
     if (allowed) assert.match(discovered.new_editor_url, /post-new.php\?post_type=wp_block$/);
+    else if (allow === null) assert.equal(discovered.error, 'invalid_native_response', JSON.stringify(discovered));
     else {
       assert.equal(discovered.error, 'pattern_creation_forbidden');
       assert.equal(discovered.diagnostics.capability, 'create');

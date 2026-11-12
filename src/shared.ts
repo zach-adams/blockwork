@@ -72,12 +72,13 @@ export function postRecord(
   collection: string,
   id: number | string,
   fields?: string[],
+  context: 'edit' | 'view' = 'edit',
 ) {
   const selection = fields ? `&_fields=${encodeURIComponent(fields.join(','))}` : '';
 
   return api(
     wp,
-    `${recordPath(collection, id)}?context=edit${selection}`,
+    `${recordPath(collection, id)}?context=${context}${selection}`,
     'GET',
     undefined,
     4 * maximumContentBytes,

@@ -416,6 +416,9 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
       if (f.api) {
         const value = await f.api(options);
 
+        // An unparsed request gets the Response as a browser would give it.
+        if (value instanceof Response) return value;
+
         if (value !== undefined) return restFields(value, path, method);
       }
 

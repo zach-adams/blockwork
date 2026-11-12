@@ -924,13 +924,33 @@ async function discoverDocuments(
   assert(type, 'unsupported_post_type');
 
   if (type.slug === 'wp_block') {
-    const allowed = await timedRequest('core/canUser', budgetedMs(12000), async () =>
-      wp.data.resolveSelect?.('core').canUser?.('create', { kind: 'postType', name: 'wp_block' }),
-    );
-    assert(allowed === true, 'pattern_creation_forbidden', {
-      capability: 'create',
-      post_type: 'wp_block',
+    // The Allow header core-data's canUser reads. A plain wp-admin tab may not
+    // load core-data, and apiFetch throws an unparsed error as its Response.
+    const response = await timedRequest('OPTIONS /wp/v2/blocks', budgetedMs(12000), (signal) =>
+      wp.apiFetch({
+        path: '/wp/v2/blocks',
+        method: 'OPTIONS',
+        cache: 'no-store',
+        signal,
+        parse: false,
+      }),
+    ).catch((error: unknown) => {
+      if (error instanceof Response) {
+        return error;
+      }
+
+      throw error;
     });
+    const allow = response.ok ? response.headers.get('allow') : null;
+    assert(allow !== null, 'invalid_native_response', {
+      request: 'OPTIONS /wp/v2/blocks',
+      status: response.status,
+    });
+    assert(
+      allow.split(',').some((method) => method.trim() === 'POST'),
+      'pattern_creation_forbidden',
+      { capability: 'create', post_type: 'wp_block' },
+    );
   }
 
   const records = await api(
