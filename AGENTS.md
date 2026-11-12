@@ -16,7 +16,7 @@ access and the maintainer reopens that work.
 
 Blockwork is open source under the [MIT license](LICENSE). Pushing, publishing a
 release, and changing an account plugin's audience or discoverability each
-require the maintainer's explicit request.
+require the maintainer's explicit request or standing authorization.
 
 ## Branches
 
@@ -25,6 +25,11 @@ long-lived branch to keep after every merge. Commit directly on `main` only for 
 quick bug fix, then merge `main` into `dev`. To release, merge `main` into `dev` if
 it moved, then fast-forward `main` to `dev`, once the maintainer asks or the task
 says the work is ready.
+
+`origin` holds the shared copy of both branches. Start work with
+`git pull --ff-only`. When a branch has diverged from its `origin` copy, merge it
+with `git pull --no-rebase` instead of rebasing or force-pushing commits that are
+already pushed.
 
 ## Required development checks
 
