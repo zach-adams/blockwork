@@ -934,14 +934,29 @@ async function discoverDocuments(
         signal,
         parse: false,
       }),
-    ).catch((error: unknown) => {
-      if (error instanceof Response) {
-        return error;
+    ).catch(async (error: unknown) => {
+      if (!(error instanceof Response)) {
+        throw error;
       }
 
-      throw error;
+      // WordPress's own error, such as an ended session, classifies as it
+      // would for a parsed request.
+      let body: unknown;
+
+      try {
+        body = JSON.parse((await error.text()).slice(0, 64 * 1024));
+      } catch {
+        // Left undefined: the body is not WordPress's JSON error.
+      }
+
+      throw v.is(ApiErrorSchema, body) && body.code
+        ? body
+        : new BlockworkError('invalid_native_response', {
+            request: 'OPTIONS /wp/v2/blocks',
+            status: error.status,
+          });
     });
-    const allow = response.ok ? response.headers.get('allow') : null;
+    const allow = response.headers.get('allow');
     assert(allow !== null, 'invalid_native_response', {
       request: 'OPTIONS /wp/v2/blocks',
       status: response.status,

@@ -516,12 +516,19 @@ test('detach refuses non-pattern references, invalid pattern content and native 
 });
 
 test('pattern discovery includes only the supported shared create type and checks create permission', async () => {
-  for (const allow of ['GET, POST', 'GET', null]) {
+  for (const allow of ['GET, POST', 'GET', null, 'signed out']) {
     const allowed = allow === 'GET, POST';
     const f = sharedFixture();
     // WordPress lists the methods this user may send, the header core-data's canUser reads.
+    // apiFetch throws an unparsed error as its Response.
+    const options = () => {
+      if (allow === 'signed out') throw new Response(JSON.stringify({ code: 'rest_not_logged_in', data: { status: 401 } }), { status: 401 });
+
+      return new Response('{}', { headers: allow === null ? {} : { allow } });
+    };
+
     f.api = ({ path, method, parse }) => method === 'OPTIONS' && path === '/wp/v2/blocks' && parse === false
-      ? new Response('{}', { headers: allow === null ? {} : { allow } })
+      ? options()
       : path === '/wp/v2/types?context=edit'
         ? Object.fromEntries(['wp_block', 'wp_navigation', 'wp_template', 'wp_template_part'].map((slug) => [slug, { slug, rest_namespace: 'wp/v2', rest_base: slug === 'wp_block' ? 'blocks' : slug, supports: { editor: true } }]))
         : path.startsWith('/wp/v2/blocks?') ? [] : undefined;
@@ -534,6 +541,7 @@ test('pattern discovery includes only the supported shared create type and check
 
     if (allowed) assert.match(discovered.new_editor_url, /post-new.php\?post_type=wp_block$/);
     else if (allow === null) assert.equal(discovered.error, 'invalid_native_response', JSON.stringify(discovered));
+    else if (allow === 'signed out') assert.equal(discovered.error, 'reauthorization_required', JSON.stringify(discovered));
     else {
       assert.equal(discovered.error, 'pattern_creation_forbidden');
       assert.equal(discovered.diagnostics.capability, 'create');
