@@ -9,7 +9,7 @@ Results from older desktop runs are historical and do not establish current beha
 | Pages, posts, and custom post types | Supported | Create and edit block content and post settings using WordPress registrations. |
 | Text, layout, styles, and responsive settings | Supported | The real-editor suite covers common edits and style families. |
 | Media, categories, and tags | Supported | Upload and attach media and manage terms; some Gallery bindings remain limited. [Finding](editing-results.md#visible-limits) |
-| Synced patterns | Supported | Shared editing and overrides have real-editor coverage. |
+| Synced patterns | Supported | Shared editing, overrides, creation from copied sections, and detaching one reference use native registrations. Creation and page replacement are separate verified saves. Detach preserves instance overrides and leaves the shared source unchanged. |
 | Templates and template parts | Experimental | An older desktop run saved both but failed to release their locks. [Result](history/integration-results.md#deferred-plugin-issues) |
 | Navigation menus | Experimental | An older desktop run refused inspection before editing. [Result](history/integration-results.md#deferred-plugin-issues) |
 | Query loops, dynamic dates, tabs, and custom block effects | Experimental | Some requests require explicit companion values or are refused. [Findings](editing-results.md#findings) |

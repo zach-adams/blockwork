@@ -47,6 +47,83 @@ const query = (attributes = {}) => ({
   inner_blocks: [{ name: 'core/post-template', inner_blocks: [{ name: 'core/post-title' }] }],
 });
 
+test('create a synced pattern from a section and replace the original blocks', async () => {
+  const section = await serializeNatively(site, "[wp.blocks.createBlock('core/group', {}, [wp.blocks.createBlock('core/paragraph', {content:'Reusable CTA'})])]");
+  await withDocument(site, { content: doc(section, paragraph('Neighbor')) }, async ({ blockwork, doc: connected, id, before }) => {
+    const client_id = connected.blocks[0].client_id;
+    const read = await blockwork.read({ blocks: { client_id, markup: true } });
+    assert.equal(read.ok, true, JSON.stringify(read));
+    const tab = await site.openTab(site.site + '/wp-admin/upload.php');
+    const caller = await site.createCaller(tab);
+    let pattern;
+
+    try {
+      const created = await caller.create({ target: siteTarget(), post_type: 'wp_block' });
+      assert.equal(created.ok, true, JSON.stringify(created));
+      pattern = created.document.post_id;
+      const baseline = await storedDocument(site, pattern);
+      const edited = await caller.edit({ scope: 'all_references', post: { title: 'Blockwork reusable CTA', status: 'publish' }, edits: [{ op: 'insert', markup: read.markup }] });
+      assert.equal(edited.ok, true, JSON.stringify(edited));
+      const saved = await caller.save();
+      await assertSavedCleanly(site, pattern, baseline, saved, { allow: ['title', 'slug', 'status', 'date'] });
+      assert.equal((await storedDocument(site, pattern)).content, section);
+    } finally {
+      await caller.release().catch(() => undefined);
+      await tab.close();
+    }
+
+    const inspected = await inspect(blockwork, pattern);
+    assert.equal(inspected.ok, true, JSON.stringify(inspected));
+    const swapped = await blockwork.edit({ edits: [
+      { op: 'remove', client_id },
+      { op: 'insert_reference', index: 0, reference: reference(pattern, inspected.reference_token) },
+    ] });
+    assert.equal(swapped.ok, true, JSON.stringify(swapped));
+    const { after: stored } = await assertSavedCleanly(site, id, before, await blockwork.save());
+    assert.equal(stored.content, doc(referenceBlock(pattern), paragraph('Neighbor')));
+  });
+});
+
+test('creating a synced pattern refuses a non-reusable block before changing the auto-draft', async () => {
+  const tab = await site.openTab(site.site + '/wp-admin/upload.php');
+  const caller = await site.createCaller(tab);
+
+  try {
+    const created = await caller.create({ target: siteTarget(), post_type: 'wp_block' });
+    assert.equal(created.ok, true, JSON.stringify(created));
+    const id = created.document.post_id;
+    const before = await storedDocument(site, id);
+    await site.evaluate(tab, "wp.blocks.registerBlockType('blockwork/non-reusable', {apiVersion:3,title:'Non-reusable fixture',category:'text',supports:{reusable:false},edit:()=>null,save:()=>wp.element.createElement('p',null,'Fixture')}); true");
+    assert.equal(await site.evaluate(tab, "wp.blocks.hasBlockSupport('blockwork/non-reusable', 'reusable', true)"), false);
+    const result = await caller.edit({ scope: 'all_references', post: { title: 'Refused pattern', status: 'publish' }, edits: [{ op: 'insert', block: { name: 'blockwork/non-reusable' } }] });
+    await assertRefused(site, id, before, result, { error: 'pattern_block_not_reusable' });
+    assert.equal((await caller.status()).dirty, false);
+  } finally {
+    await caller.release().catch(() => undefined);
+    await tab.close();
+  }
+});
+
+for (const overrides of [false, true]) {
+  test('detach a synced pattern into static blocks with overrides ' + overrides, async () => {
+    const bound = paragraph('Default question', { metadata: { name: 'Question', id: 'binding-id', bindings: { content: { source: 'core/pattern-overrides' } } } });
+    const pattern = await seedDocument(site, { type: 'wp_block', content: bound });
+    const attributes = { ref: pattern };
+
+    if (overrides) attributes.content = { Question: { content: 'Visible question', unknown: 'Ignored' } };
+    const instance = block('block', attributes);
+    const original = await storedDocument(site, pattern);
+    await withDocument(site, { content: doc(instance, paragraph('Neighbor')) }, async ({ blockwork, doc: connected, id, before }) => {
+      const result = await blockwork.edit({ edits: [{ op: 'detach_reference', client_id: connected.blocks[0].client_id }] });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.ok(result.changed.some((item) => item.name === 'core/paragraph'), JSON.stringify(result));
+      const { after: stored } = await assertSavedCleanly(site, id, before, await blockwork.save());
+      assert.equal(stored.content, doc(paragraph(overrides ? 'Visible question' : 'Default question', { metadata: { name: 'Question' } }), paragraph('Neighbor')));
+      assert.deepEqual(await storedDocument(site, pattern), original);
+    });
+  });
+}
+
 test('shared patterns require scope and update both pages', async () => {
   const pattern = await seedDocument(site, {
     type: 'wp_block',

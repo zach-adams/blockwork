@@ -298,6 +298,7 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
       },
     },
     blocks: { getBlockType: (name) => registrations[name], getBlockTypes: () => Object.values(registrations), serialize, parse,
+      hasBlockSupport: (name, feature, defaultValue) => registrations[name]?.supports?.[feature] ?? defaultValue,
       __unstableSerializeAndClean: (blocks) => blocks.length === 1 && wp.blocks.isUnmodifiedDefaultBlock(blocks[0]) ? '' : wp.blocks.serialize(blocks),
       isUnmodifiedDefaultBlock: (block) => block.name === 'core/paragraph' &&
         Object.entries(registrations[block.name].attributes).every(([key, definition]) => {
@@ -414,6 +415,9 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
 
       if (f.api) {
         const value = await f.api(options);
+
+        // An unparsed request gets the Response as a browser would give it.
+        if (value instanceof Response) return value;
 
         if (value !== undefined) return restFields(value, path, method);
       }
@@ -690,6 +694,17 @@ function referenceFixture() {
   const baseApi = f.api;
   f.api = async (request) => request.method !== 'OPTIONS' && request.path.startsWith('/wp/v2/blocks/77') ? record : baseApi?.(request);
   f.referenceRecord = record;
+  const clone = f.window.wp.blocks.cloneBlock;
+  f.window.wp.blocks.cloneBlock = (block, attributes, innerBlocks) => ({
+    ...clone(block, attributes, innerBlocks), clientId: f.window.wp.blocks.createBlock(block.name).clientId,
+  });
+  const select = f.window.wp.data.select;
+  f.window.wp.data.select = (store) => {
+    const selected = select(store);
+
+    return store === 'core' ? { ...selected, getEditedEntityRecord: (kind, name, id) =>
+      name === 'wp_block' && id === 77 ? f.editedReference : selected.getEditedEntityRecord(kind, name, id) } : selected;
+  };
 
   return f;
 }

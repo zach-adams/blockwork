@@ -1,7 +1,13 @@
 import * as v from 'valibot';
 import { Budget, pause, remainingMs } from './timing';
 import type { Deadline } from './timing';
-import { BlockInputSchema, JsonObjectSchema, JsonSchema, ResolvedEditSchema } from './contracts';
+import {
+  BlockInputSchema,
+  JsonObjectSchema,
+  JsonSchema,
+  PostSchema,
+  ResolvedEditSchema,
+} from './contracts';
 import type {
   BlockInput,
   BlockSummary,
@@ -32,7 +38,14 @@ import { canonical, same } from './values';
 import { requireContexts } from './canvas';
 import { renderAffected, withinInitialization } from './initialization';
 import { safeValue, schemaAllows } from './schema';
-import { checkReferenceGraph, editorUrl, readReference } from './shared';
+import {
+  checkReferenceGraph,
+  checkSharedRecord,
+  checkContentSize,
+  editorUrl,
+  postRecord,
+  readReference,
+} from './shared';
 import type { Target } from './contracts';
 import { documentBlocks, documentRoot, resetDocument } from './document-view';
 import {
@@ -1790,6 +1803,77 @@ function recordEditDependencies(
   }
 }
 
+async function detachPattern(wp: WordPress, target: Target, block: Block): Promise<Block[]> {
+  assert(
+    block.name === 'core/block' &&
+      Number.isSafeInteger(block.attributes.ref) &&
+      Number(block.attributes.ref) > 0,
+    'detach_pattern_required',
+  );
+  const id = Number(block.attributes.ref);
+  // Patterns send raw content in view context, so an author can detach one
+  // they can read but not edit, as Gutenberg's own block does. Other text
+  // fields there are rendered only, so they stay out.
+  const fields = ['id', 'type', 'status', 'slug', 'content', 'meta', 'wp_pattern_sync_status'];
+  const post = v.parse(PostSchema, await postRecord(wp, '/wp/v2/blocks', id, fields, 'view'));
+  checkSharedRecord(post, { ...target, post_type: 'wp_block', post_id: id });
+  // A background reference may never mount; core-data still holds live pattern edits.
+  const edited = wp.data.select('core').getEditedEntityRecord?.('postType', 'wp_block', id);
+  let source = edited && edited.blocks;
+
+  if (!source) {
+    let markup = post.content.raw;
+
+    if (edited) {
+      const raw = typeof edited.content === 'function' ? edited.content(edited) : edited.content;
+      markup = typeof raw === 'string' ? raw : raw.raw;
+    }
+
+    checkContentSize(markup);
+    source = wp.blocks.parse(markup);
+  }
+
+  assert(validity(readTree(wp, source)).valid, 'detach_pattern_unsupported');
+  checkContentSize(wp.blocks.serialize(source));
+  const overrides = block.attributes.content;
+  const clone = (item: Block): Block => {
+    const values = copyAttributes(item.attributes);
+    const metadata = values.metadata;
+
+    if (v.is(JsonObjectSchema, metadata)) {
+      const named =
+        v.is(JsonObjectSchema, overrides) && typeof metadata.name === 'string'
+          ? overrides[metadata.name]
+          : undefined;
+
+      if (v.is(JsonObjectSchema, named)) {
+        const registered = wp.blocks.getBlockType(item.name)?.attributes ?? {};
+
+        for (const [key, value] of Object.entries(named)) {
+          if (Object.hasOwn(registered, key)) {
+            values[key] = value;
+          }
+        }
+      }
+
+      delete metadata.id;
+      delete metadata.bindings;
+      values.metadata = Object.keys(metadata).length ? metadata : undefined;
+    }
+
+    attributes(
+      wp,
+      item.name,
+      Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined)),
+      'native',
+    );
+
+    return wp.blocks.cloneBlock(item, values, (item.innerBlocks ?? []).map(clone));
+  };
+
+  return source.map(clone);
+}
+
 async function preparePatternInsertion(
   wp: WordPress,
   target: Target,
@@ -2155,7 +2239,7 @@ async function dispatchPlanStep(
       // The removal policy passed above; reset keeps this planned empty state.
       await resetDocument(wp, [], () => matches(step.before), dispatch);
     }
-  } else if (edit.op === 'replace') {
+  } else if (edit.op === 'replace' || edit.op === 'detach_reference') {
     await actions.replaceBlocks([at(live, edit.path).clientId], copyTree(step.blocks), null);
   }
 }
@@ -2373,6 +2457,11 @@ export async function preparePlan(
         }
       }
 
+      if (edit.op === 'detach_reference') {
+        assert(existing, 'block_mismatch');
+        inserted = await detachPattern(wp, target, existing);
+      }
+
       if (edit.op === 'update') {
         assert(existing, 'block_mismatch');
         update = updateAttributes(wp, existing, edit.attributes, edit.unset);
@@ -2390,6 +2479,35 @@ export async function preparePlan(
       if (edit.op === 'move') {
         assert(existing && !containsPath(edit.path, edit.parent), 'invalid_move');
         inserted = [existing];
+      }
+
+      if (
+        target.post_type === 'wp_block' &&
+        wp.data.select('core/editor').getCurrentPost().status === 'auto-draft'
+      ) {
+        let destination: number[] = [];
+
+        if ('parent' in edit) {
+          destination = edit.parent;
+        } else if ('path' in edit) {
+          destination = edit.path.slice(0, -1);
+        }
+
+        if (!destination.length) {
+          for (const block of inserted) {
+            const registered = wp.blocks.getBlockType(block.name);
+            assert(
+              block.isValid === true &&
+                wp.blocks.hasBlockSupport(
+                  block.name,
+                  'reusable',
+                  !registered || !('parent' in registered),
+                ),
+              'pattern_block_not_reusable',
+              { block_name: block.name },
+            );
+          }
+        }
       }
 
       await policy(wp, blocks, edit, inserted, liveIds);

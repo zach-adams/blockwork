@@ -20,6 +20,7 @@ import {
   RouteSchema,
   route,
   routeLabel,
+  timedRequest,
   validateFields,
   writableFields,
 } from './native';
@@ -921,6 +922,51 @@ async function discoverDocuments(
 
   const type = available.find((item) => item.slug === input.post_type);
   assert(type, 'unsupported_post_type');
+
+  if (type.slug === 'wp_block') {
+    // The Allow header core-data's canUser reads. A plain wp-admin tab may not
+    // load core-data, and apiFetch throws an unparsed error as its Response.
+    const response = await timedRequest('OPTIONS /wp/v2/blocks', budgetedMs(12000), (signal) =>
+      wp.apiFetch({
+        path: '/wp/v2/blocks',
+        method: 'OPTIONS',
+        cache: 'no-store',
+        signal,
+        parse: false,
+      }),
+    ).catch(async (error: unknown) => {
+      if (!(error instanceof Response)) {
+        throw error;
+      }
+
+      // WordPress's own error, such as an ended session, classifies as it
+      // would for a parsed request.
+      let body: unknown;
+
+      try {
+        body = JSON.parse((await error.text()).slice(0, 64 * 1024));
+      } catch {
+        // Left undefined: the body is not WordPress's JSON error.
+      }
+
+      throw v.is(ApiErrorSchema, body) && body.code
+        ? body
+        : new BlockworkError('invalid_native_response', {
+            request: 'OPTIONS /wp/v2/blocks',
+            status: error.status,
+          });
+    });
+    const allow = response.headers.get('allow');
+    assert(allow !== null, 'invalid_native_response', {
+      request: 'OPTIONS /wp/v2/blocks',
+      status: response.status,
+    });
+    assert(
+      allow.split(',').some((method) => method.trim() === 'POST'),
+      'pattern_creation_forbidden',
+      { capability: 'create', post_type: 'wp_block' },
+    );
+  }
 
   const records = await api(
     wp,

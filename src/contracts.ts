@@ -46,7 +46,8 @@ export const PostTypeSchema = v.pipe(
   v.regex(/^[a-z0-9_-]{1,32}$/),
   v.check(
     (value) =>
-      !value.startsWith('wp_') && !['attachment', 'revision', 'nav_menu_item'].includes(value),
+      (value === 'wp_block' || !value.startsWith('wp_')) &&
+      !['attachment', 'revision', 'nav_menu_item'].includes(value),
   ),
 );
 
@@ -364,6 +365,7 @@ function editSchema<
       style: v.nullable(candidate),
     }),
     v.strictObject({ op: v.literal('insert_reference'), ...point, reference: ReferenceSchema }),
+    v.strictObject({ op: v.literal('detach_reference'), ...targetBlock }),
     v.strictObject({
       op: v.literal('update_reference'),
       ...targetBlock,
@@ -386,6 +388,7 @@ const selectorOps = [
   'remove',
   'set_block_style',
   'update_reference',
+  'detach_reference',
 ];
 
 export const EditSchema = v.pipe(

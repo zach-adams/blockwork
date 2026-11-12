@@ -225,9 +225,24 @@ export async function prepareSettings(
   const references: Reference[] = [];
 
   if (sharedType(input.target.post_type)) {
-    assert(!input.post && !input.settings && !input.binding_writes.length, 'shared_content_only');
+    const pattern = input.target.post_type === 'wp_block';
+    assert(
+      !input.settings &&
+        !input.binding_writes.length &&
+        (!input.post ||
+          (pattern &&
+            Object.keys(input.post).every((key) => ['title', 'status'].includes(key)) &&
+            (input.post.status === undefined ||
+              (post.status === 'auto-draft' && input.post.status === 'publish')))),
+      'shared_content_only',
+    );
 
-    return { values, original: {}, meta_keys: [], references, date_fields: [] };
+    if (pattern && post.status === 'auto-draft') {
+      assert(
+        input.post?.title?.trim() && input.post.status === 'publish',
+        'pattern_creation_fields_required',
+      );
+    }
   }
 
   for (const [key, value] of Object.entries(input.post ?? {})) {
@@ -304,7 +319,7 @@ export async function prepareSettings(
     }
   }
 
-  if (post.status === 'auto-draft') {
+  if (post.status === 'auto-draft' && input.target.post_type !== 'wp_block') {
     const creation = input.post;
     assert(
       creation &&
