@@ -36,7 +36,7 @@ function fixture() {
       annotations: { readonly: true, destructive: false, idempotent: true },
       input_schema: { type: 'object', properties: { post_id: { type: 'integer' } }, marker: 'SCHEMA-MARKER' },
       output_schema: { type: 'object', marker: 'OUTPUT-MARKER' } },
-    'demo/set-value': { label: 'Set value', description: 'Sets a value.', input_schema: { type: 'object' },
+    'demo/set-value': { label: 'Set value', description: 'Sets a value.', input_schema: { type: 'object' }, output_schema: [],
       annotations: { readonly: false, destructive: false, idempotent: false } },
     'demo/replace-meta': { label: 'Replace meta', description: 'Overwrites meta.', input_schema: { type: 'object' },
       annotations: { readonly: false, destructive: true, idempotent: true } },
@@ -189,6 +189,10 @@ test('inspect_abilities lists compact summaries and returns a schema for one nam
   await f.call('inspect_abilities', { category: 'demo-content', namespace: 'demo', page: 2 });
   assert.match(f.requests.at(-1).path, /\?per_page=50&page=2&category=demo-content&namespace=demo&_fields=/);
   assert.equal((await f.call('inspect_abilities', { namespace: 'Demo/' })).error, 'invalid_ability_request');
+  // This fixture answers every list in full, as WordPress 7.0 ignores namespace.
+  assert.deepEqual((await f.call('inspect_abilities', { namespace: 'other' })).abilities, []);
+  assert.equal((await f.call('inspect_abilities', { namespace: 'demo' })).abilities.length, 7);
+  assert.equal((await f.call('inspect_abilities', { name: 'demo/set-value' })).ability.output_schema, null);
 
   const one = await f.call('inspect_abilities', { name: 'demo/read-info' });
   assert.equal(one.ability.effect, 'read');

@@ -15,6 +15,9 @@ test('older supported WordPress versions list and run abilities', async () => {
       const list = await admin.inspect();
       assert.equal(list.ok, true, `${version} ${JSON.stringify(list)}`);
       assert.equal(admin.raw.at(-1).body.includes('input_schema'), false);
+      // 7.0 ignores the namespace filter, so Blockwork filters the page itself.
+      const filtered = await admin.inspect({ namespace: 'blockwork-fixture' });
+      assert.ok(filtered.abilities.length > 0 && filtered.abilities.every((ability) => ability.name.startsWith('blockwork-fixture/')), `${version} ${JSON.stringify(filtered)}`);
       const read = await admin.run('blockwork-fixture/echo', 'read', { text: 'floor', list: [1, 2] });
       assert.deepEqual([read.ok, read.output?.input.text], [true, 'floor'], `${version} ${JSON.stringify(read)}`);
       const written = await admin.run('blockwork-fixture/set-marker', 'write', { value: version });

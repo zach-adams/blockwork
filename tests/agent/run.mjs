@@ -68,8 +68,10 @@ if (chosen.length === 0) {
 await mkdir(out, { recursive: true });
 
 const scratch = await mkdtemp(join(tmpdir(), 'blockwork-agent-'));
-// Yoast SEO stays inactive until the seo-title task turns it on.
-const site = await startEditingSite({ install: ['wordpress-seo'] });
+// Plugins the chosen tasks need, installed inactive for each task to turn on.
+const site = await startEditingSite({
+  install: [...new Set(chosen.flatMap((task) => task.install ?? []))],
+});
 const results = [];
 let appStarted = false;
 

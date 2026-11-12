@@ -93,8 +93,9 @@ plugin's editor instead of core's. Only the Guidelines case in `plugins` uses it
 see [site guidelines](site-guidelines.md#keep-up-with-gutenberg).
 `install: ['wordpress-seo']` installs the latest releases of the named
 WordPress.org plugins without activating them, and a case turns its plugin on and
-off, as `setYoast` does. The agent suite's site installs Yoast SEO this way for its
-`seo-` tasks. Both options need network access when the site boots.
+off, as `setYoast` does. An agent task's own `install` list does the same for the
+agent suite's site, only when that task is selected. Both need network access
+when the site boots.
 
 Select a file, finding, or case when working on a fix. Combine selectors to run
 only their intersection. A finding may cover more than one case.

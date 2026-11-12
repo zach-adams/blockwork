@@ -95,7 +95,9 @@ const result = await blockwork.call({
 `category`, `effect`, and the first 200 characters of `description`;
 `may_have_more` flags another page. `category` or `namespace`, the part of a
 name before the slash, narrows the list to one plugin's abilities, as in
-`namespace: "yoast-seo"`. With `name` it returns one `ability` with its full
+`namespace: "yoast-seo"`. WordPress 7.0 ignores `namespace`, so Blockwork
+filters each page there, and a page can hold fewer than 50 while
+`may_have_more` is true. With `name` it returns one `ability` with its full
 description, `input_schema`, and `output_schema`, the shape of a successful
 run's `output`, or `null` when the plugin declared none. `effect` comes from the
 annotations the plugin declared:

@@ -1374,6 +1374,7 @@ export const tasks = [
   {
     id: 'seo-sitemap-off',
     level: 'simple',
+    install: ['wordpress-seo'],
     source: 'common request',
     setup: async (site) => {
       await setYoast(site, true);
@@ -1395,6 +1396,7 @@ export const tasks = [
   {
     id: 'seo-title',
     level: 'simple',
+    install: ['wordpress-seo'],
     source: 'common request',
     setup: async (site) => {
       await setYoast(site, true);

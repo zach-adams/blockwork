@@ -210,14 +210,18 @@ async function readAbility(wp: WordPress, name: string, fields: string) {
   return v.parse(AbilitySchema, await api(wp, `${collection}/${name}?_fields=${fields}`));
 }
 
-async function listAbilities(wp: WordPress, path: string, page: number) {
+async function listAbilities(wp: WordPress, path: string, page: number, namespace?: string) {
   const records = await api(wp, path);
 
   assert(Array.isArray(records), 'invalid_native_response');
+  const abilities = records.map((record) => v.parse(AbilitySchema, record));
 
   return bounded({
     ok: true,
-    abilities: records.map((record) => summary(v.parse(AbilitySchema, record), 200)),
+    // WordPress 7.0 ignores the namespace filter, so each page is filtered here too.
+    abilities: abilities
+      .filter((ability) => !namespace || ability.name.startsWith(`${namespace}/`))
+      .map((ability) => summary(ability, 200)),
     page,
     may_have_more: records.length === pageSize,
   });
@@ -342,7 +346,7 @@ export async function abilityOperation(request: AbilityRequest) {
         // Schemas stay on the server until one ability is inspected by name.
         query._fields = 'name,label,description,category,meta.annotations';
 
-        return await listAbilities(wp, url.addQueryArgs(collection, query), page);
+        return await listAbilities(wp, url.addQueryArgs(collection, query), page, namespace);
       }
 
       const ability = await readAbility(
@@ -356,7 +360,10 @@ export async function abilityOperation(request: AbilityRequest) {
         ability: {
           ...summary(ability, 2000),
           input_schema: ability.input_schema ?? null,
-          output_schema: ability.output_schema ?? null,
+          // Core sends [] when the plugin declared no output schema.
+          output_schema: v.is(JsonObjectSchema, ability.output_schema)
+            ? ability.output_schema
+            : null,
         },
       });
     }
