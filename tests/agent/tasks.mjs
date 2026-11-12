@@ -1370,6 +1370,30 @@ export const tasks = [
       );
     },
   },
+  {
+    id: 'pattern-from-section',
+    level: 'medium',
+    source: 'common request',
+    setup: () => ({
+      content: doc(group(heading('Talk to us'), paragraph('We reply within a day.')), paragraph('Outside.')),
+    }),
+    prompt: ({ link }) =>
+      `On ${link}, turn the "Talk to us" section into a synced pattern called "Contact CTA" so I can reuse it on other pages, use that pattern in its place on this page, and save.`,
+    allowedPaths: ['0'],
+    check: async ({ afterTree, site, expect }) => {
+      const reference = node(afterTree, 0);
+      const ref = Number(reference.attrs?.ref);
+      const pattern = ref > 0 ? await storedDocument(site, ref) : undefined;
+
+      expect(reference.blockName === 'core/block' && ref > 0, 'the section should become a pattern reference');
+      expect(
+        pattern?.status === 'publish' && pattern.title === 'Contact CTA',
+        `pattern is ${JSON.stringify(pattern && { status: pattern.status, title: pattern.title })}`,
+      );
+      expect(pattern?.content.includes('We reply within a day.'), 'the pattern should hold the section');
+      expect(node(afterTree, 1).innerHTML.includes('Outside.'), 'the rest of the page should stay');
+    },
+  },
   // Last, so a run that stops before its check leaves Yoast active for no other task.
   {
     id: 'seo-sitemap-off',
