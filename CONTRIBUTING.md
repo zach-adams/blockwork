@@ -32,8 +32,8 @@ from `src/`; rebuild it instead of editing it.
 
 See [real-editor tests](docs/editing-tests.md) for selectors and fixture details. Desktop
 host behavior needs the [desktop test app](docs/development.md#desktop-test-app), not
-just the engine suite. Test only on disposable Playground fixtures or local sites
-explicitly authorized for testing.
+just the engine suite. Test only on disposable Playground fixtures or sites,
+local or remote, explicitly authorized for testing.
 
 ## Local installation
 

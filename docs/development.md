@@ -145,8 +145,10 @@ JS
 node tools/dev-browser.mjs stop
 ```
 
-With `--wp`, `start` signs in through a WP-CLI auth cookie for `--user`, which
-defaults to `admin`. A `pnpm fixture` Playground site signs in by itself, so omit `--wp`.
+The browser works with any WordPress site it can reach, local or remote. With
+`--wp`, `start` signs in through a WP-CLI auth cookie for `--user`, which
+defaults to `admin`. That runs WP-CLI on this machine, so `--wp` needs the site's
+WordPress root here. A `pnpm fixture` Playground site signs in by itself, so omit `--wp`.
 For a `.local` URL, `start` maps `*.local` to the IPv4 address the system resolves
 for that host, because Chromium's own lookup of `.local` names can take over 30
 seconds on macOS. Set `AGENT_BROWSER_ARGS` yourself to launch Chromium differently.
@@ -157,6 +159,14 @@ and `stop` leaves it in place, so a sign-in lasts across starts until WordPress
 expires it. To sign in by hand, such as on a site with no WP-CLI, run `start`
 with `--headed`, sign in in that window, and later starts reuse the login.
 Remove the folder for a clean browser.
+
+To sign in to a remote site whose WP-CLI you can reach over SSH, start without
+`--wp`. On the server, create a session token and its secure-auth and logged-in
+cookies with `wp_generate_auth_cookie()`, as `signIn()` in
+`tools/browser-session.mjs` does. Set both in the browser with
+`agent-browser --session blockwork-dev cookies set <name> <value> --secure`, then
+open the editor URL. Destroy that session token with `WP_Session_Tokens` when you
+finish.
 
 A `run` snippet is the body of an async function. It receives `blockwork`, the
 bootstrap caller; `cdp`, the tab capability; `state`, an object kept between runs;

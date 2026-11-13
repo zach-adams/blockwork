@@ -118,8 +118,8 @@ Upload an account release only when the maintainer explicitly requests one.
 
 When a CLI agent needs to run Blockwork workflows without the desktop in-app
 browser, use `tools/dev-browser.mjs` as described in
-[the development guide](docs/development.md#cli-development-browser). Point it at a local site the
-user authorized or a `pnpm fixture` Playground site. Its results cover the engine, invoker,
+[the development guide](docs/development.md#cli-development-browser). Point it at a site the
+user authorized, local or remote, or at a `pnpm fixture` Playground site. Its results cover the engine, invoker,
 and request shapes. Verify desktop host behavior and acceptance claims in the
 Codex desktop app. The packaged skill's ban on external CDP endpoints still
 governs plugin use.
@@ -185,8 +185,8 @@ using it.
 
 ## Test sites
 
-Test only on `pnpm fixture` Playground sites or local sites the user
-authorizes. Keep test changes identifiable as Blockwork work and report created
+Test only on `pnpm fixture` Playground sites or sites the user authorizes, local
+or remote. Keep test changes identifiable as Blockwork work and report created
 users, content IDs, and cleanup needs. WP-CLI is a development fixture tool,
 never a requirement for plugin users. Production access, site exposure or
 tunnels, WordPress deployment, and account plugin publication require separate
