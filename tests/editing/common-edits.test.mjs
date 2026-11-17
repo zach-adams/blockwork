@@ -223,21 +223,39 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
   });
 });
 
+test('classic HTML keeps leading pre newlines as native conversion does', async () => {
+  const html = '<pre>\n\n\n\n\nline</pre>';
+  await withDocument(site, { content: doc(paragraph('Keep')) }, async ({ blockwork, tab }) => {
+    const native = await site.evaluate(
+      tab,
+      `String(wp.blocks.rawHandler({ HTML: wp.autop.autop(${JSON.stringify(html)}) })[0].attributes.content)`,
+    );
+    success(await blockwork.edit({ edits: [{ op: 'insert', html }] }));
+    const read = await blockwork.read({ blocks: { depth: 1 } });
+    success(read);
+    // A recreated Preformatted spells its line breaks as <br>.
+    assert.equal(read.blocks[1].attributes.content.replaceAll('<br>', '\n'), native);
+  });
+});
+
 test('read, edit, and copy stored line breaks without doubling them', async () => {
   const code = '<pre class="wp-block-preformatted">line one\nline two</pre>';
   const linked = '<p><a href="/x" title="x\ny">link</a> one\ntwo</p>';
+  const scripted = '<p>Run <svg><script>// comment\nrun()</script></svg></p>';
   const seed = doc(
     block('paragraph', undefined, '<p>First line<br>\nsecond line</p>'),
     block('preformatted', undefined, code),
     block('paragraph', undefined, linked),
+    block('paragraph', undefined, scripted),
   );
   await withDocument(site, { content: seed }, async ({ blockwork, id, before }) => {
     const read = await blockwork.read({ blocks: { depth: 1 } });
     success(read);
-    const [stored, preformatted, link] = read.blocks;
+    const [stored, preformatted, link, script] = read.blocks;
     assert.equal(stored.attributes.content, 'First line<br>second line');
     assert.equal(preformatted.attributes.content, 'line one\nline two');
     assert.equal(link.attributes.content, '<a href="/x" title="x\ny">link</a> one two');
+    assert.match(script.attributes.content, /\/\/ comment\nrun\(\)/);
     const copy = await blockwork.read({ blocks: { client_id: stored.client_id, markup: true } });
     success(copy);
     success(
@@ -256,7 +274,13 @@ test('read, edit, and copy stored line breaks without doubling them', async () =
     const saved = (await storedTree(site, id)).filter((item) => item.blockName);
     assert.deepEqual(
       saved.map((item) => item.innerHTML.trim()),
-      ['<p>First line<br>second line edited</p>', code, linked, '<p>First line<br>second line</p>'],
+      [
+        '<p>First line<br>second line edited</p>',
+        code,
+        linked,
+        scripted,
+        '<p>First line<br>second line</p>',
+      ],
     );
   });
 });

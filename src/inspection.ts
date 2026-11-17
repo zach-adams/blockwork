@@ -112,17 +112,35 @@ function parsedSpelling(html: string, collapse: boolean): string {
   return template.innerHTML;
 }
 
-// Text inside pre, script, style, and textarea keeps its newlines.
+// Text inside these elements keeps its newlines. SVG names its script and
+// style in lowercase. Parsing drops a newline right after <pre>, <listing>, or
+// <textarea>, so one is added back for the next parse when the text starts
+// with another.
 function collapseText(parent: Node): void {
   for (const node of Array.from(parent.childNodes)) {
+    const name = node.nodeName.toUpperCase();
+    const first = node.firstChild;
+
     if (node.nodeType === node.TEXT_NODE) {
       node.textContent = (node.textContent ?? '').replace(
-        /[\t\n\f\r ]*\n[\t\n\f\r ]*/g,
-        (match: string, offset: number) =>
-          offset === 0 && node.previousSibling?.nodeName === 'BR' ? '' : ' ',
+        /[\t\n\f\r ]+/g,
+        (match: string, offset: number) => {
+          if (!match.includes('\n')) {
+            return match;
+          }
+
+          return offset === 0 && node.previousSibling?.nodeName.toUpperCase() === 'BR' ? '' : ' ';
+        },
       );
-    } else if (!['PRE', 'SCRIPT', 'STYLE', 'TEXTAREA'].includes(node.nodeName)) {
+    } else if (!['PRE', 'LISTING', 'TEXTAREA', 'SCRIPT', 'STYLE'].includes(name)) {
       collapseText(node);
+    } else if (
+      ['PRE', 'LISTING', 'TEXTAREA'].includes(name) &&
+      first &&
+      first.nodeType === first.TEXT_NODE &&
+      first.textContent?.startsWith('\n')
+    ) {
+      first.textContent = `\n${first.textContent}`;
     }
   }
 }
