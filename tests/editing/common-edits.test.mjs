@@ -171,7 +171,7 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
     '<h3>Early years</h3>',
     'First line\nsecond line',
     'A <a href="/about/">linked</a> paragraph.',
-    '<ul>\n<li>One</li>\n<li>Two</li>\n</ul>',
+    '<ul>\n<li>One</li>\n<li>Two\nlines</li>\n</ul>',
     '<pre>line one\nline two</pre>',
     `<img class="alignnone size-full wp-image-${image.id}" src="${image.url}" alt="Classic photo" />`,
     `<blockquote><img class="wp-image-${image.id}" src="${image.url}" alt="Quoted photo" /></blockquote>`,
@@ -206,6 +206,10 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
       ],
     );
     assert.equal(inserted[1].innerHTML.trim(), '<p>First line<br>second line</p>');
+    assert.equal(
+      inserted[3].innerBlocks.filter((item) => item.blockName)[1].innerHTML.trim(),
+      '<li>Two<br>lines</li>',
+    );
     assert.match(inserted[4].innerHTML, />line one(<br>|\n)line two</);
     assert.equal(inserted[5].attrs.id, image.id);
     assert.deepEqual(

@@ -486,7 +486,7 @@ exact rules.
   and `&copy;` and `©` are the same text. A stored newline outside a tag reads as
   a space, or as nothing right after `<br>`, because Gutenberg parsed it as
   whitespace while a newline in a sent value is a line break. Code, Preformatted,
-  and Verse keep their newlines. Other text and markup differences still
+  and Verse keep their newlines, as does text inside `<script>` or `<style>`. Other text and markup differences still
   fail verification. String-typed attributes keep exact
   comparisons regardless of source, including HTML-sourced script content.
 - Rich-text values are HTML. A bare `&` in a requested value is written as

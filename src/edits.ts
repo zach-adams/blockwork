@@ -19,6 +19,7 @@ import type {
 import type { Attribute, Block, BlockActions, BlockEditor, WordPress } from './wordpress';
 import {
   blockState,
+  collapseNewlines,
   postDateField,
   unsupportedBinding,
   containsPath,
@@ -3120,11 +3121,13 @@ export function markupBlocks(
 
 // Convert classic-editor HTML as the Classic block's Convert to blocks does:
 // its parser runs autop on classic content, then rawHandler makes blocks.
+// Some conversions, such as List's, make rich text from an element's HTML
+// string, so newlines are collapsed before conversion as well as on read.
 export function htmlBlocks(wp: WordPress, html: string): BlockInput[] {
   let converted: Block[];
 
   try {
-    converted = wp.blocks.rawHandler({ HTML: wp.autop.autop(html) });
+    converted = wp.blocks.rawHandler({ HTML: collapseNewlines(wp.autop.autop(html)) });
   } catch (cause) {
     throw new BlockworkError('html_conversion_failed', undefined, { cause });
   }

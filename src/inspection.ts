@@ -105,25 +105,37 @@ function parsedSpelling(html: string): string {
   return template.innerHTML;
 }
 
-// A parsed block keeps its stored HTML, where the parser read a newline outside
-// a tag as a space. Rich text made from a string reads a newline as a line
-// break, so sending that HTML back would double each stored <br> and newline.
-// Comments, tags, and attributes stay as written.
-function collapseNewlines(html: string): string {
+// Parsed HTML treats a newline outside a tag as a space, but rich text made
+// from a string reads it as a line break, so sending stored HTML back would
+// double each <br> and newline. Comments, tags with their quoted attributes,
+// and text inside pre, script, style, and textarea stay as written. An
+// unmatched quote or < leaves the rest of the HTML unchanged.
+export function collapseNewlines(html: string): string {
+  let raw = '';
   let afterBreak = false;
 
   return html
-    .split(/(<!--[\s\S]*?-->|<[^>]*>)/)
+    .split(/(<!--[\s\S]*?-->|<(?:[^>"']|"[^"]*"|'[^']*')*>)/)
     .map((part, index) => {
       if (index % 2) {
+        const opened = /^<(pre|script|style|textarea)[\t\n\f\r />]/i.exec(part)?.[1];
+
+        if (!raw && opened) {
+          raw = opened.toLowerCase();
+        } else if (/^<\/([a-z]+)/i.exec(part)?.[1]?.toLowerCase() === raw) {
+          raw = '';
+        }
+
         afterBreak = /^<br[\t\n\f\r />]/i.test(part);
 
         return part;
       }
 
-      return part.replace(/[\t\n\f\r ]*\n[\t\n\f\r ]*/g, (match: string, offset: number) =>
-        offset === 0 && afterBreak ? '' : ' ',
-      );
+      return raw
+        ? part
+        : part.replace(/[\t\n\f\r ]*\n[\t\n\f\r ]*/g, (match: string, offset: number) =>
+            offset === 0 && afterBreak ? '' : ' ',
+          );
     })
     .join('');
 }

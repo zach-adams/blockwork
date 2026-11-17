@@ -1519,15 +1519,32 @@ test('stored rich-text newlines collapse unless the attribute preserves whitespa
   const { wp } = f.window;
   f.registrations['example/code'] = { name: 'example/code', attributes: { content: { type: 'rich-text', __unstablePreserveWhiteSpace: true } } };
   const markup = wp.blocks.serialize([
-    { name: 'core/paragraph', attributes: { content: 'Open <a href="/pro\nject">link</a><br>\n two\nthree' }, innerBlocks: [] },
+    { name: 'core/paragraph', attributes: { content: 'Open <a href="/pro\nject" title="x>\ny">link</a><br>\n\u00a0two\nthree <script>// c\nrun()</script>' }, innerBlocks: [] },
     { name: 'example/code', attributes: { content: 'a\nb' }, innerBlocks: [] },
   ]);
   const edited = await f.call('edit', { edits: [{ op: 'insert', markup }] });
   assert.equal(edited.ok, true, JSON.stringify(edited));
   assert.deepEqual(
     f.blocks.slice(-2).map((block) => String(block.attributes.content)),
-    ['Open <a href="/pro\nject">link</a><br>\u00a0two three', 'a\nb'],
+    ['Open <a href="/pro\nject" title="x>\ny">link</a><br>\u00a0two three <script>// c\nrun()</script>', 'a\nb'],
   );
+});
+
+test('html conversion collapses newlines before rawHandler outside raw-text elements', async () => {
+  const f = fixture();
+  await f.call('connect');
+  const { wp } = f.window;
+  let seen;
+  wp.autop = { autop: (text) => text };
+  wp.blocks.rawHandler = ({ HTML }) => {
+    seen = HTML;
+
+    return [wp.blocks.createBlock('core/paragraph', { content: 'Converted' })];
+  };
+
+  const html = '<ul><li>a<br />\nb</li></ul>\n<PRE class="x">c\nd</PRE>\n<script>e\n</p>\nf</script>\n<p>g\nh</p>';
+  assert.equal((await f.call('edit', { edits: [{ op: 'insert', html }] })).ok, true);
+  assert.equal(seen, '<ul><li>a<br />b</li></ul> <PRE class="x">c\nd</PRE> <script>e\n</p>\nf</script> <p>g h</p>');
 });
 
 test('markup insertion normalizes native rich text before attribute validation', async () => {
