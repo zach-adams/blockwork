@@ -67,10 +67,10 @@ export function containsPath(parent: number[], child: number[]): boolean {
 function mapRichText(
   value: JsonValue | undefined,
   schema: Attribute | undefined,
-  convert: (text: JsonValue | undefined) => JsonValue | undefined,
+  convert: (text: JsonValue | undefined, schema: Attribute) => JsonValue | undefined,
 ): JsonValue | undefined {
   if (schema?.type === 'rich-text') {
-    return convert(value);
+    return convert(value, schema);
   }
 
   if (schema?.source === 'query' && Array.isArray(value)) {
@@ -105,11 +105,41 @@ function parsedSpelling(html: string): string {
   return template.innerHTML;
 }
 
-// Unset rich text parses back as empty, so the two compare the same.
+// A parsed block keeps its stored HTML, where the parser read a newline outside
+// a tag as a space. Rich text made from a string reads a newline as a line
+// break, so sending that HTML back would double each stored <br> and newline.
+// Comments, tags, and attributes stay as written.
+function collapseNewlines(html: string): string {
+  let afterBreak = false;
+
+  return html
+    .split(/(<!--[\s\S]*?-->|<[^>]*>)/)
+    .map((part, index) => {
+      if (index % 2) {
+        afterBreak = /^<br[\t\n\f\r />]/i.test(part);
+
+        return part;
+      }
+
+      return part.replace(/[\t\n\f\r ]*\n[\t\n\f\r ]*/g, (match: string, offset: number) =>
+        offset === 0 && afterBreak ? '' : ' ',
+      );
+    })
+    .join('');
+}
+
+// Unset rich text parses back as empty, so the two compare the same. Code,
+// Preformatted, and Verse mark their newlines as meaningful.
 function nativeAttribute(value: JsonValue | undefined, schema?: Attribute): JsonValue | undefined {
-  return mapRichText(value, schema, (text) =>
-    text === undefined ? '' : parsedSpelling(String(text)),
-  );
+  return mapRichText(value, schema, (text, attribute) => {
+    if (text === undefined) {
+      return '';
+    }
+
+    const html = String(text);
+
+    return parsedSpelling(attribute.__unstablePreserveWhiteSpace ? html : collapseNewlines(html));
+  });
 }
 
 // Rich text is HTML, so a bare & or < in requested text is literal. Escape them

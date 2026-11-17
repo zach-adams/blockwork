@@ -3124,7 +3124,7 @@ export function htmlBlocks(wp: WordPress, html: string): BlockInput[] {
   let converted: Block[];
 
   try {
-    converted = wp.blocks.rawHandler({ HTML: collapseNewlines(wp.autop.autop(html)) });
+    converted = wp.blocks.rawHandler({ HTML: wp.autop.autop(html) });
   } catch (cause) {
     throw new BlockworkError('html_conversion_failed', undefined, { cause });
   }
@@ -3143,32 +3143,6 @@ export function htmlBlocks(wp: WordPress, html: string): BlockInput[] {
   });
 
   return blockInputs(wp, converted, 'create');
-}
-
-// After autop, a newline in text outside <pre> is only whitespace, but a
-// recreated rich-text string reads it as another line break. Like autop, this
-// treats <...> as a tag, and it leaves comments, tags, and attributes as written.
-function collapseNewlines(html: string): string {
-  let pre = false;
-  let afterBreak = false;
-
-  return html
-    .split(/(<!--[\s\S]*?-->|<[^>]*>)/)
-    .map((part, index) => {
-      if (index % 2) {
-        pre = /^<pre[\t\n\f\r />]/i.test(part) || (pre && !/^<\/pre[\t\n\f\r >]/i.test(part));
-        afterBreak = /^<br[\t\n\f\r />]/i.test(part);
-
-        return part;
-      }
-
-      return pre
-        ? part
-        : part.replace(/[\t\n\f\r ]*\n[\t\n\f\r ]*/g, (match: string, offset: number) =>
-            offset === 0 && afterBreak ? '' : ' ',
-          );
-    })
-    .join('');
 }
 
 // Drop what native conversion leaves behind, at any depth, because containers

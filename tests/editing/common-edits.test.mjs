@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { editingTests } from './cases.mjs';
 
-import { button, buttons, doc, group, heading, list, listItem, paragraph } from './blocks.mjs';
+import {
+  block,
+  button,
+  buttons,
+  doc,
+  group,
+  heading,
+  list,
+  listItem,
+  paragraph,
+} from './blocks.mjs';
 import {
   assertRefused,
   assertSavedCleanly,
@@ -206,6 +216,41 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
     assert.match(inserted[7].innerHTML, /<figcaption[^>]*>A caption<\/figcaption>/);
     const front = await frontEnd(site, id);
     assert.ok(front.html.includes('<a href="/about/">linked</a>'));
+  });
+});
+
+test('read, edit, and copy stored line breaks without doubling them', async () => {
+  const code = '<pre class="wp-block-preformatted">line one\nline two</pre>';
+  const seed = doc(
+    block('paragraph', undefined, '<p>First line<br>\nsecond line</p>'),
+    block('preformatted', undefined, code),
+  );
+  await withDocument(site, { content: seed }, async ({ blockwork, id, before }) => {
+    const read = await blockwork.read({ blocks: { depth: 1 } });
+    success(read);
+    const [stored, preformatted] = read.blocks;
+    assert.equal(stored.attributes.content, 'First line<br>second line');
+    assert.equal(preformatted.attributes.content, 'line one\nline two');
+    const copy = await blockwork.read({ blocks: { client_id: stored.client_id, markup: true } });
+    success(copy);
+    success(
+      await blockwork.edit({
+        edits: [
+          {
+            op: 'update',
+            client_id: stored.client_id,
+            attributes: { content: `${stored.attributes.content} edited` },
+          },
+          { op: 'insert', markup: copy.markup },
+        ],
+      }),
+    );
+    await assertSavedCleanly(site, id, before, await blockwork.save());
+    const saved = (await storedTree(site, id)).filter((item) => item.blockName);
+    assert.deepEqual(
+      saved.map((item) => item.innerHTML.trim()),
+      ['<p>First line<br>second line edited</p>', code, '<p>First line<br>second line</p>'],
+    );
   });
 });
 
