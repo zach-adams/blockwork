@@ -93,51 +93,42 @@ function mapRichText(
 
 // Gutenberg creation and DOM parsing spell the same text differently: a parsed
 // block keeps the browser's innerHTML, with &gt;, &nbsp;, and decoded entities.
-// Comparing that spelling lets a new block and its parsed form match.
-function parsedSpelling(html: string): string {
-  if (!/[&<>\u00a0]/.test(html)) {
+// Comparing that spelling lets a new block and its parsed form match. collapse
+// also turns each newline in text into a space, or nothing after <br>: the
+// parser read stored newlines as spaces, but rich text made from a string
+// reads them as line breaks, so sending stored HTML back would double breaks.
+function parsedSpelling(html: string, collapse: boolean): string {
+  if (!/[&<>\u00a0]/.test(html) && !(collapse && html.includes('\n'))) {
     return html;
   }
 
   const template = document.createElement('template');
   template.innerHTML = html;
 
+  if (collapse) {
+    collapseText(template.content);
+  }
+
   return template.innerHTML;
 }
 
-// Parsed HTML treats a newline outside a tag as a space, but rich text made
-// from a string reads it as a line break, so sending stored HTML back would
-// double each <br> and newline. Comments, tags with their quoted attributes,
-// and text inside pre, script, style, and textarea stay as written. An
-// unmatched quote or < leaves the rest of the HTML unchanged.
+// Text inside pre, script, style, and textarea keeps its newlines.
+function collapseText(parent: Node): void {
+  for (const node of Array.from(parent.childNodes)) {
+    if (node.nodeType === node.TEXT_NODE) {
+      node.textContent = (node.textContent ?? '').replace(
+        /[\t\n\f\r ]*\n[\t\n\f\r ]*/g,
+        (match: string, offset: number) =>
+          offset === 0 && node.previousSibling?.nodeName === 'BR' ? '' : ' ',
+      );
+    } else if (!['PRE', 'SCRIPT', 'STYLE', 'TEXTAREA'].includes(node.nodeName)) {
+      collapseText(node);
+    }
+  }
+}
+
 export function collapseNewlines(html: string): string {
-  let raw = '';
-  let afterBreak = false;
-
-  return html
-    .split(/(<!--[\s\S]*?-->|<(?:[^>"']|"[^"]*"|'[^']*')*>)/)
-    .map((part, index) => {
-      if (index % 2) {
-        const opened = /^<(pre|script|style|textarea)[\t\n\f\r />]/i.exec(part)?.[1];
-
-        if (!raw && opened) {
-          raw = opened.toLowerCase();
-        } else if (/^<\/([a-z]+)/i.exec(part)?.[1]?.toLowerCase() === raw) {
-          raw = '';
-        }
-
-        afterBreak = /^<br[\t\n\f\r />]/i.test(part);
-
-        return part;
-      }
-
-      return raw
-        ? part
-        : part.replace(/[\t\n\f\r ]*\n[\t\n\f\r ]*/g, (match: string, offset: number) =>
-            offset === 0 && afterBreak ? '' : ' ',
-          );
-    })
-    .join('');
+  return parsedSpelling(html, true);
 }
 
 // Unset rich text parses back as empty, so the two compare the same. Code,
@@ -148,9 +139,7 @@ function nativeAttribute(value: JsonValue | undefined, schema?: Attribute): Json
       return '';
     }
 
-    const html = String(text);
-
-    return parsedSpelling(attribute.__unstablePreserveWhiteSpace ? html : collapseNewlines(html));
+    return parsedSpelling(String(text), !attribute.__unstablePreserveWhiteSpace);
   });
 }
 

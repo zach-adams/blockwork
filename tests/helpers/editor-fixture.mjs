@@ -461,7 +461,7 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
   const invoke = runInNewContext(`const invoke = ${engine}; (json) => invoke(JSON.parse(json))`, { window: f.window, location: f.location,
     URL, URLSearchParams, Response, TextEncoder, crypto, AbortSignal, setTimeout, clearTimeout,
     Date: class extends Date { static now() { return Date.now() + (f.elapsedMs ?? 0); } },
-    document: { body: { get className() { return f.bodyClass ?? 'wp-admin branch-7-1 version-7-1-2'; } }, createElement: () => ({ set innerHTML(html) { this.html = html.replaceAll('\u00a0', '&nbsp;').replace(/\s>\s/g, ' &gt; '); }, get innerHTML() { return this.html; } }), getElementById: (id) => f.isRendered?.(id) === false ? null : {}, querySelector: () => {
+    document: { body: { get className() { return f.bodyClass ?? 'wp-admin branch-7-1 version-7-1-2'; } }, createElement: () => ({ content: { childNodes: [] }, set innerHTML(html) { this.html = html.replaceAll('\u00a0', '&nbsp;').replace(/\s>\s/g, ' &gt; '); }, get innerHTML() { return this.html; } }), getElementById: (id) => f.isRendered?.(id) === false ? null : {}, querySelector: () => {
       f.canvasReads = (f.canvasReads ?? 0) + 1;
 
       return f.frame ?? null;

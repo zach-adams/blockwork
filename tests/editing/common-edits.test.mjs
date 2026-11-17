@@ -225,16 +225,19 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
 
 test('read, edit, and copy stored line breaks without doubling them', async () => {
   const code = '<pre class="wp-block-preformatted">line one\nline two</pre>';
+  const linked = '<p><a href="/x" title="x\ny">link</a> one\ntwo</p>';
   const seed = doc(
     block('paragraph', undefined, '<p>First line<br>\nsecond line</p>'),
     block('preformatted', undefined, code),
+    block('paragraph', undefined, linked),
   );
   await withDocument(site, { content: seed }, async ({ blockwork, id, before }) => {
     const read = await blockwork.read({ blocks: { depth: 1 } });
     success(read);
-    const [stored, preformatted] = read.blocks;
+    const [stored, preformatted, link] = read.blocks;
     assert.equal(stored.attributes.content, 'First line<br>second line');
     assert.equal(preformatted.attributes.content, 'line one\nline two');
+    assert.equal(link.attributes.content, '<a href="/x" title="x\ny">link</a> one two');
     const copy = await blockwork.read({ blocks: { client_id: stored.client_id, markup: true } });
     success(copy);
     success(
@@ -253,7 +256,7 @@ test('read, edit, and copy stored line breaks without doubling them', async () =
     const saved = (await storedTree(site, id)).filter((item) => item.blockName);
     assert.deepEqual(
       saved.map((item) => item.innerHTML.trim()),
-      ['<p>First line<br>second line edited</p>', code, '<p>First line<br>second line</p>'],
+      ['<p>First line<br>second line edited</p>', code, linked, '<p>First line<br>second line</p>'],
     );
   });
 });
