@@ -1493,7 +1493,12 @@ test('html insertion converts through autop and rawHandler and refuses raw fragm
   assert.equal(thrown.error, 'html_conversion_failed', JSON.stringify(thrown));
   assert.equal(thrown.diagnostics.field, 'edits.0.html');
   assert.equal(thrown.diagnostics.edit_index, 0);
+  assert.match(JSON.stringify(thrown.debug), /private transform message/);
   assert.equal(f.dirty, false);
+  wp.blocks.rawHandler = () => [wp.blocks.createBlock('example/card', { variant: 'warning' })];
+  const outside = await f.call('edit', { edits: [{ op: 'insert', html: 'One' }] });
+  assert.equal(outside.error, 'invalid_attribute_value', JSON.stringify(outside));
+  assert.equal(outside.diagnostics.field, 'edits.0.html');
   wp.blocks.rawHandler = handler;
 
   const edited = await f.call('edit', { edits: [{ op: 'insert', index: 1, html: 'First\n\n\n\nSecond' }] });
@@ -1515,9 +1520,9 @@ test('html preparation collapses text newlines but keeps tags, nonbreaking space
     return [wp.blocks.createBlock('core/paragraph', { content: 'Converted' })];
   };
 
-  const html = '<p>Open <a href="/pro\nject">link</a><br />\n two\nthree</p>\n<PRE class="x">a\nb</PRE>\n<p>c\nd</p>';
+  const html = '<p>Open <a href="/pro\nject">link</a><br />\n\u00a0two\nthree</p>\n<PRE class="x">a\nb</PRE>\n<pre>e\n<!-- > </PRE> -->\nf</pre>\n<p>c\nd</p>';
   assert.equal((await f.call('edit', { edits: [{ op: 'insert', html }] })).ok, true);
-  assert.equal(seen, '<p>Open <a href="/pro\nject">link</a><br /> two three</p> <PRE class="x">a\nb</PRE> <p>c d</p>');
+  assert.equal(seen, '<p>Open <a href="/pro\nject">link</a><br />\u00a0two three</p> <PRE class="x">a\nb</PRE> <pre>e\n<!-- > </PRE> -->\nf</pre> <p>c d</p>');
 });
 
 test('markup insertion normalizes native rich text before attribute validation', async () => {

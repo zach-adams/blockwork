@@ -116,9 +116,11 @@ custom field, without block comments. Blockwork converts it as the Classic
 block's Convert to blocks does. Blank lines become paragraphs and single line
 breaks become `<br>`, except inside `<pre>`. Gutenberg's own conversions make
 paragraph, heading, list, quote, preformatted, image, and shortcode blocks.
-Blockwork drops what would not survive a reload: empty paragraphs, and attribute
-values outside a block's registered choices, such as the `align: "none"` that a
-`[caption]` conversion writes. A shortcode with no block conversion becomes a
+Blockwork removes what conversion leaves behind: empty paragraphs, such as the
+one left where an image was lifted out, and the `align: "none"` that a
+`[caption]` conversion writes, which the Image block does not accept. Other
+values a conversion writes outside a block's registered choices refuse with
+`invalid_attribute_value`. A shortcode with no block conversion becomes a
 Shortcode block, which still needs the theme or plugin that registers it. The
 root blocks become consecutive inserts, like `markup`, and each counts as one
 edit. An element with no block conversion, such as a form, refuses the edit with

@@ -1319,11 +1319,15 @@ function expandEdits(wp: WordPress, input: EditInput) {
           ['unmapped_media_url', 'media_map'],
           ['unmapped_internal_link', 'link_map'],
         ]);
-        throw new BlockworkError(error.code, {
-          ...error.diagnostics,
-          edit_index: editIndex,
-          field: `edits.${editIndex}.${fields.get(error.code) ?? source}`,
-        });
+        throw new BlockworkError(
+          error.code,
+          {
+            ...error.diagnostics,
+            edit_index: editIndex,
+            field: `edits.${editIndex}.${fields.get(error.code) ?? source}`,
+          },
+          { cause: error },
+        );
       }
 
       throw error;

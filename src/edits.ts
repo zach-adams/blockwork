@@ -3147,13 +3147,13 @@ export function htmlBlocks(wp: WordPress, html: string): BlockInput[] {
 
 // After autop, a newline in text outside <pre> is only whitespace, but a
 // recreated rich-text string reads it as another line break. Like autop, this
-// treats <...> as a tag, and it leaves tags and their attributes as written.
+// treats <...> as a tag, and it leaves comments, tags, and attributes as written.
 function collapseNewlines(html: string): string {
   let pre = false;
   let afterBreak = false;
 
   return html
-    .split(/(<[^>]*>)/)
+    .split(/(<!--[\s\S]*?-->|<[^>]*>)/)
     .map((part, index) => {
       if (index % 2) {
         pre = /^<pre[\t\n\f\r />]/i.test(part) || (pre && !/^<\/pre[\t\n\f\r >]/i.test(part));
@@ -3173,23 +3173,18 @@ function collapseNewlines(html: string): string {
 
 // Drop what native conversion leaves behind, at any depth, because containers
 // such as Quote convert their children the same way. Lifting an image out of
-// its autop paragraph leaves that paragraph empty. Gutenberg's parser resets a
-// value outside its attribute's enum on the next load, such as the align "none"
-// that the caption shortcode's conversion writes.
+// its autop paragraph leaves that paragraph empty, and the caption shortcode's
+// conversion writes align "none", which means no alignment but is outside
+// core/image's registered choices.
 function tidyConverted(wp: WordPress, blocks: Block[]): Block[] {
   return blocks.flatMap((block) => {
     if (wp.blocks.isUnmodifiedDefaultBlock?.(block)) {
       return [];
     }
 
-    const registered = wp.blocks.getBlockType(block.name)?.attributes ?? {};
-    const attributes = Object.fromEntries(
-      Object.entries(block.attributes).filter(([key, value]) => {
-        const allowed = registered[key]?.enum;
-
-        return !allowed || allowed.some((item) => same(item, value));
-      }),
-    );
+    const { align, ...aligned } = block.attributes;
+    const choices = wp.blocks.getBlockType(block.name)?.attributes?.align?.enum;
+    const attributes = align === 'none' && !choices?.includes('none') ? aligned : block.attributes;
 
     return [{ ...block, attributes, innerBlocks: tidyConverted(wp, block.innerBlocks ?? []) }];
   });
