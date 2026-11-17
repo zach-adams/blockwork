@@ -164,6 +164,9 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
     '<ul>\n<li>One</li>\n<li>Two</li>\n</ul>',
     '<pre>line one\nline two</pre>',
     `<img class="alignnone size-full wp-image-${image.id}" src="${image.url}" alt="Classic photo" />`,
+    `<blockquote><img class="wp-image-${image.id}" src="${image.url}" alt="Quoted photo" /></blockquote>`,
+    `[caption id="attachment_${image.id}" align="alignnone" width="300"]<img class="size-full wp-image-${image.id}" src="${image.url}" alt="" /> A caption[/caption]`,
+    '[blockwork_widget id="3"]',
   ].join('\n\n');
   const seed = doc(group(heading('About')));
   await withDocument(site, { content: seed }, async ({ blockwork, id, before }) => {
@@ -172,7 +175,7 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
     });
     await assertRefused(site, id, before, refused, { error: 'html_not_convertible' });
     assert.equal(refused.diagnostics.field, 'edits.0.html');
-    assert.deepEqual(refused.diagnostics.unconverted, [{ path: [6], tag: 'form' }]);
+    assert.deepEqual(refused.diagnostics.unconverted, [{ path: [9], tag: 'form' }]);
     success(await blockwork.edit({ edits: [{ op: 'insert', parent: [0], html }] }));
     await assertSavedCleanly(site, id, before, await blockwork.save());
     const inserted = (await storedTree(site, id))[0].innerBlocks
@@ -187,11 +190,20 @@ test('insert classic HTML as native blocks and refuse raw fragments', async () =
         'core/list',
         'core/preformatted',
         'core/image',
+        'core/quote',
+        'core/image',
+        'core/shortcode',
       ],
     );
     assert.equal(inserted[1].innerHTML.trim(), '<p>First line<br>second line</p>');
     assert.match(inserted[4].innerHTML, />line one(<br>|\n)line two</);
     assert.equal(inserted[5].attrs.id, image.id);
+    assert.deepEqual(
+      inserted[6].innerBlocks.filter((block) => block.blockName).map((block) => block.blockName),
+      ['core/image'],
+    );
+    assert.equal(inserted[7].attrs.id, image.id);
+    assert.match(inserted[7].innerHTML, /<figcaption[^>]*>A caption<\/figcaption>/);
     const front = await frontEnd(site, id);
     assert.ok(front.html.includes('<a href="/about/">linked</a>'));
   });

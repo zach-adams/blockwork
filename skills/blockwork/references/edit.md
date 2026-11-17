@@ -114,11 +114,14 @@ refuses.
 `html` takes classic-editor HTML, such as classic post content or a rich-text
 custom field, without block comments. Blockwork converts it as the Classic
 block's Convert to blocks does. Blank lines become paragraphs and single line
-breaks become `<br>`, except inside `<pre>`. Gutenberg's own conversions then
-make paragraph, heading, list, quote, preformatted, image, and shortcode blocks,
-and Blockwork drops the empty paragraphs they leave behind. The root blocks
-become consecutive inserts, like `markup`, and each counts as one edit. An
-element with no block conversion, such as a form, refuses the edit with
+breaks become `<br>`, except inside `<pre>`. Gutenberg's own conversions make
+paragraph, heading, list, quote, preformatted, image, and shortcode blocks.
+Blockwork drops what would not survive a reload: empty paragraphs, and attribute
+values outside a block's registered choices, such as the `align: "none"` that a
+`[caption]` conversion writes. A shortcode with no block conversion becomes a
+Shortcode block, which still needs the theme or plugin that registers it. The
+root blocks become consecutive inserts, like `markup`, and each counts as one
+edit. An element with no block conversion, such as a form, refuses the edit with
 `html_not_convertible`, and `diagnostics.unconverted` names its tag. Rewrite or
 remove that element, or build it as a `block` tree. Send serialized block
 content as `markup`.

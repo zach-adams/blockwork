@@ -3120,35 +3120,79 @@ export function markupBlocks(
 
 // Convert classic-editor HTML as the Classic block's Convert to blocks does:
 // its parser runs autop on classic content, then rawHandler makes blocks.
-// After autop, a newline outside <pre> is only whitespace, but a recreated
-// rich-text string reads it as another line break. Lifting an image out of
-// its autop paragraph leaves that paragraph empty.
 export function htmlBlocks(wp: WordPress, html: string): BlockInput[] {
-  const prepared = wp.autop
-    .autop(html)
-    .split(/(<pre[\s>][\s\S]*?<\/pre>)/i)
-    .map((part, index) =>
-      index % 2 ? part : part.replace(/\s*\n\s*/g, ' ').replace(/(<br\s*\/?>) /gi, '$1'),
-    )
-    .join('');
-  const converted = wp.blocks
-    .rawHandler({ HTML: prepared })
-    .filter((block) => !wp.blocks.isUnmodifiedDefaultBlock?.(block));
+  let converted: Block[];
+
+  try {
+    converted = wp.blocks.rawHandler({ HTML: collapseNewlines(wp.autop.autop(html)) });
+  } catch (cause) {
+    throw new BlockworkError('html_conversion_failed', undefined, { cause });
+  }
+
+  converted = tidyConverted(wp, converted);
   const raw = readTree(wp, converted).filter((row) =>
     ['core/html', 'core/freeform'].includes(row.name),
   );
   assert(converted.length > 0 && raw.length === 0, 'html_not_convertible', {
     block_count: converted.length,
-    unconverted: raw
-      .slice(0, 5)
-      .map((row) => ({
-        path: row.path,
-        tag:
-          /<([a-z][a-z0-9-]*)/i.exec(wp.blocks.serialize([row.block]))?.[1]?.toLowerCase() ?? null,
-      })),
+    unconverted: raw.slice(0, 5).map((row) => {
+      const tag = /<([a-z][a-z0-9-]*)/i.exec(wp.blocks.serialize([row.block]))?.[1];
+
+      return { path: row.path, tag: tag ? diagnosticKey(tag.toLowerCase()) : null };
+    }),
   });
 
   return blockInputs(wp, converted, 'create');
+}
+
+// After autop, a newline in text outside <pre> is only whitespace, but a
+// recreated rich-text string reads it as another line break. Like autop, this
+// treats <...> as a tag, and it leaves tags and their attributes as written.
+function collapseNewlines(html: string): string {
+  let pre = false;
+  let afterBreak = false;
+
+  return html
+    .split(/(<[^>]*>)/)
+    .map((part, index) => {
+      if (index % 2) {
+        pre = /^<pre[\t\n\f\r />]/i.test(part) || (pre && !/^<\/pre[\t\n\f\r >]/i.test(part));
+        afterBreak = /^<br[\t\n\f\r />]/i.test(part);
+
+        return part;
+      }
+
+      return pre
+        ? part
+        : part.replace(/[\t\n\f\r ]*\n[\t\n\f\r ]*/g, (match: string, offset: number) =>
+            offset === 0 && afterBreak ? '' : ' ',
+          );
+    })
+    .join('');
+}
+
+// Drop what native conversion leaves behind, at any depth, because containers
+// such as Quote convert their children the same way. Lifting an image out of
+// its autop paragraph leaves that paragraph empty. Gutenberg's parser resets a
+// value outside its attribute's enum on the next load, such as the align "none"
+// that the caption shortcode's conversion writes.
+function tidyConverted(wp: WordPress, blocks: Block[]): Block[] {
+  return blocks.flatMap((block) => {
+    if (wp.blocks.isUnmodifiedDefaultBlock?.(block)) {
+      return [];
+    }
+
+    const registered = wp.blocks.getBlockType(block.name)?.attributes ?? {};
+    const attributes = Object.fromEntries(
+      Object.entries(block.attributes).filter(([key, value]) => {
+        const allowed = registered[key]?.enum;
+
+        return !allowed || allowed.some((item) => same(item, value));
+      }),
+    );
+
+    return [{ ...block, attributes, innerBlocks: tidyConverted(wp, block.innerBlocks ?? []) }];
+  });
 }
 
 function blockInputs(wp: WordPress, parsed: Block[], purpose: 'read' | 'create'): BlockInput[] {

@@ -1467,28 +1467,57 @@ test('html insertion converts through autop and rawHandler and refuses raw fragm
   const { wp } = f.window;
   const paragraph = (content) => wp.blocks.createBlock('core/paragraph', { content });
   wp.autop = { autop: (text) => text.split('\n\n').map((part) => part.startsWith('<') ? part : `<p>${part}</p>`).join('\n') };
-  wp.blocks.rawHandler = ({ HTML }) => [...HTML.matchAll(/<p>(.*?)<\/p>|(<form>.*?<\/form>)/g)]
+  wp.blocks.rawHandler = ({ HTML }) => [...HTML.matchAll(/<p>(.*?)<\/p>|(<(form|x-a+)>.*?<\/\3>)/g)]
     .map(([, text, raw]) => raw ? wp.blocks.createBlock('core/html', { content: raw }) : paragraph(text));
 
-  const refused = await f.call('edit', { edits: [{ op: 'insert', html: 'Kept\n\n<form>Sign up</form>' }] });
+  const refused = await f.call('edit', { edits: [{ op: 'insert', html: `Kept\n\n<form>Sign up</form>\n\n<x-${'a'.repeat(100)}>Widget</x-${'a'.repeat(100)}>` }] });
   assert.equal(refused.error, 'html_not_convertible', JSON.stringify(refused));
   assert.equal(refused.diagnostics.field, 'edits.0.html');
-  assert.equal(JSON.stringify(refused.diagnostics.unconverted), '[{"path":[1],"tag":"form"}]');
+  assert.equal(JSON.stringify(refused.diagnostics.unconverted), '[{"path":[1],"tag":"form"},{"path":[2],"tag":"<key>"}]');
   assert.equal(JSON.stringify(refused).includes('Sign up'), false);
   assert.equal(f.dirty, false);
 
   const both = await f.call('edit', { edits: [{ op: 'insert', html: 'One', markup: wp.blocks.serialize([f.blocks[0]]) }] });
   assert.equal(both.error, 'invalid_edit', JSON.stringify(both));
+  assert.match(both.issues[0].hint, /html for classic HTML/);
 
   const replaced = await f.call('edit', { edits: [{ op: 'replace', client_id: f.blocks[0].clientId, html: 'One\n\nTwo' }] });
   assert.equal(replaced.error, 'invalid_replacement_markup', JSON.stringify(replaced));
   assert.equal(replaced.diagnostics.field, 'edits.0.html');
+  assert.match(replaced.hint, /exactly one root block/);
+
+  const handler = wp.blocks.rawHandler;
+  wp.blocks.rawHandler = () => { throw new Error('private transform message'); };
+
+  const thrown = await f.call('edit', { edits: [{ op: 'insert', html: 'One' }] });
+  assert.equal(thrown.error, 'html_conversion_failed', JSON.stringify(thrown));
+  assert.equal(thrown.diagnostics.field, 'edits.0.html');
+  assert.equal(thrown.diagnostics.edit_index, 0);
+  assert.equal(f.dirty, false);
+  wp.blocks.rawHandler = handler;
 
   const edited = await f.call('edit', { edits: [{ op: 'insert', index: 1, html: 'First\n\n\n\nSecond' }] });
   assert.equal(edited.ok, true, JSON.stringify(edited));
   assert.equal(JSON.stringify(edited.changed.map((block) => block.preview)), '["First","Second"]');
   assert.deepEqual(f.blocks.slice(1, 3).map((block) => block.attributes.content), ['First', 'Second']);
   assert.equal((await f.save()).persistence, 'verified');
+});
+
+test('html preparation collapses text newlines but keeps tags, nonbreaking spaces, and pre', async () => {
+  const f = fixture();
+  await f.call('connect');
+  const { wp } = f.window;
+  let seen;
+  wp.autop = { autop: (text) => text };
+  wp.blocks.rawHandler = ({ HTML }) => {
+    seen = HTML;
+
+    return [wp.blocks.createBlock('core/paragraph', { content: 'Converted' })];
+  };
+
+  const html = '<p>Open <a href="/pro\nject">link</a><br />\n two\nthree</p>\n<PRE class="x">a\nb</PRE>\n<p>c\nd</p>';
+  assert.equal((await f.call('edit', { edits: [{ op: 'insert', html }] })).ok, true);
+  assert.equal(seen, '<p>Open <a href="/pro\nject">link</a><br /> two three</p> <PRE class="x">a\nb</PRE> <p>c d</p>');
 });
 
 test('markup insertion normalizes native rich text before attribute validation', async () => {

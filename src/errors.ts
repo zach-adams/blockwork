@@ -211,6 +211,14 @@ export function validationIssues(
       };
     }
 
+    if (issue.message === 'Provide exactly one of block, markup, or html') {
+      return {
+        path,
+        expected: issue.message,
+        hint: 'Send the new content once: block for a block tree, markup for serialized block content, or html for classic HTML without block comments.',
+      };
+    }
+
     if (
       issue.message === 'Provide exactly one of path or client_id' ||
       issue.message === 'Provide parent or parent_client_id, not both'
@@ -476,12 +484,15 @@ function repairHint(code: string, operation: string): string {
     case 'unregistered_block':
     case 'block_unregistered':
       return 'The reported block name is not registered in this loaded editor. Inspect insertion or attribute_guide by name and use a registered block. A name-based style guide requires a live registration, not an existing block instance.';
+    case 'invalid_replacement_markup':
+      return 'replace needs content that becomes exactly one root block, and diagnostics.block_count says how many this became. Wrap the content in one container block, or replace the target with the first block and insert the rest after it in the same edit.';
+    case 'html_conversion_failed':
+      return "Gutenberg's HTML conversion threw in this editor, often inside a theme or plugin block's conversion rule. Nothing changed. Split the HTML at diagnostics.field into smaller inserts to find the fragment that fails, then rewrite it or build it as a block tree. Do not resend the same HTML unchanged.";
     case 'html_not_convertible':
       return "Gutenberg's HTML conversion produced no blocks, or left the fragments in diagnostics.unconverted as raw HTML, which Blockwork never inserts. Each entry gives that block's path among the converted blocks and its element tag. Remove or rewrite that element as ordinary text, headings, lists, links, or images, or build it as a block tree in its own insert. Do not send it as markup for a Custom HTML or Classic block.";
     case 'unsupported_block':
     case 'unsupported_markup':
     case 'unsupported_pattern':
-    case 'invalid_replacement_markup':
       return 'Native parsing or the supported-block check rejected this content. Inspect validity and the requested subtree or catalogue item. Use valid registered blocks and preserve unsupported content exactly; do not repair or replace unrelated content to make the plan pass.';
     case 'style_unavailable':
     case 'invalid_class_name':
