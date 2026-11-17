@@ -3115,7 +3115,10 @@ export function markupBlocks(
   markup: string,
   purpose: 'read' | 'create',
 ): BlockInput[] {
-  const parsed = wp.blocks.parse(markup);
+  return blockInputs(wp, wp.blocks.parse(markup), purpose);
+}
+
+function blockInputs(wp: WordPress, parsed: Block[], purpose: 'read' | 'create'): BlockInput[] {
   assert(parsed.length > 0, 'unsupported_markup');
   const parsedRows = readTree(wp, parsed);
   assert(validity(parsedRows).valid, 'unsupported_markup', {
