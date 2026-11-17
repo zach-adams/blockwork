@@ -1499,6 +1499,11 @@ test('html insertion converts through autop and rawHandler and refuses raw fragm
   const outside = await f.call('edit', { edits: [{ op: 'insert', html: 'One' }] });
   assert.equal(outside.error, 'invalid_attribute_value', JSON.stringify(outside));
   assert.equal(outside.diagnostics.field, 'edits.0.html');
+  f.registrations['example/card'].attributes.align = { type: 'string', default: 'right' };
+  wp.blocks.rawHandler = () => [wp.blocks.createBlock('example/card', { align: 'none' })];
+  assert.equal((await f.call('edit', { edits: [{ op: 'insert', html: 'One' }] })).ok, true);
+  assert.equal(f.blocks.at(-1).attributes.align, 'none');
+  assert.equal((await f.call('revert')).ok, true);
   wp.blocks.rawHandler = handler;
 
   const edited = await f.call('edit', { edits: [{ op: 'insert', index: 1, html: 'First\n\n\n\nSecond' }] });

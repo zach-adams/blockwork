@@ -3184,7 +3184,8 @@ function tidyConverted(wp: WordPress, blocks: Block[]): Block[] {
 
     const { align, ...aligned } = block.attributes;
     const choices = wp.blocks.getBlockType(block.name)?.attributes?.align?.enum;
-    const attributes = align === 'none' && !choices?.includes('none') ? aligned : block.attributes;
+    const attributes =
+      align === 'none' && choices && !choices.includes('none') ? aligned : block.attributes;
 
     return [{ ...block, attributes, innerBlocks: tidyConverted(wp, block.innerBlocks ?? []) }];
   });
