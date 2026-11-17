@@ -265,6 +265,7 @@ export interface WordPress {
     getCustomValueFromPreset?(value: string, sizes: JsonObject[]): string | number | undefined;
   };
   htmlEntities: { decodeEntities(html: string): string };
+  autop: { autop(text: string): string };
   blocks: {
     getBlockBindingsSource?(
       name: string,
@@ -294,6 +295,7 @@ export interface WordPress {
     serialize(blocks: Block[]): string;
     __unstableSerializeAndClean?(blocks: Block[]): string;
     parse(content: string): Block[];
+    rawHandler(input: { HTML: string }): Block[];
     cloneBlock(block: Block, attributes: JsonObject, innerBlocks: Block[]): Block;
   };
   data: {

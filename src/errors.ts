@@ -351,8 +351,8 @@ function repairHint(code: string, operation: string): string {
     case 'invalid_edit':
       return (
         'edit takes edits, post, settings, binding_writes, media_bindings, scope, and measure. ' +
-        'Address existing blocks by client_id and destinations by parent_client_id. insert and replace take block or markup. ' +
-        'update merges attributes and accepts unset paths. Supply at most 32 edits after markup expansion.'
+        'Address existing blocks by client_id and destinations by parent_client_id. insert and replace take block, markup, or html. ' +
+        'update merges attributes and accepts unset paths. Supply at most 32 edits after markup and html expansion.'
       );
     case 'invalid_request':
       return `Check the ${operation} example in the operation reference and correct the listed paths. Use only documented keys.`;
@@ -410,7 +410,7 @@ function repairHint(code: string, operation: string): string {
     case 'empty_edit':
       return 'Supply at least one edit or document setting.';
     case 'too_many_edits':
-      return 'An edit accepts at most 32 operations after markup expansion. Split the work across several edit calls.';
+      return 'An edit accepts at most 32 operations after markup and html expansion, where each root block counts as one. Split the work across several edit calls, such as one html insert per section.';
     case 'invalid_native_response':
     case 'invalid_entity_list':
       return 'The native response did not match the required schema. Check issues for the response field and constraint; these paths describe native data, not request fields. Preserve the receipt and follow next if a write may have occurred. Do not change the request to accommodate malformed server data.';
@@ -476,6 +476,8 @@ function repairHint(code: string, operation: string): string {
     case 'unregistered_block':
     case 'block_unregistered':
       return 'The reported block name is not registered in this loaded editor. Inspect insertion or attribute_guide by name and use a registered block. A name-based style guide requires a live registration, not an existing block instance.';
+    case 'html_not_convertible':
+      return "Gutenberg's HTML conversion produced no blocks, or left the fragments in diagnostics.unconverted as raw HTML, which Blockwork never inserts. Each entry gives that block's path among the converted blocks and its element tag. Remove or rewrite that element as ordinary text, headings, lists, links, or images, or build it as a block tree in its own insert. Do not send it as markup for a Custom HTML or Classic block.";
     case 'unsupported_block':
     case 'unsupported_markup':
     case 'unsupported_pattern':

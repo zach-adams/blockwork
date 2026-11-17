@@ -61,8 +61,8 @@ recovery.
 | --- | --- |
 | `update` | target, `attributes` to merge, optional `unset` paths |
 | `update_style` | target, optional `set` `[{property, value}]` and `unset` property paths; see [styling](styling.md) |
-| `insert` | `block` tree or `markup`; optional destination, `index`, `media_map`, and `link_map` ([copy sections between sites](media.md#copy-sections-between-sites)) |
-| `replace` | target, `block` tree or `markup` with exactly one root; optional `media_map` and `link_map` |
+| `insert` | `block` tree, `markup`, or classic `html`; optional destination, `index`, `media_map`, and `link_map` ([copy sections between sites](media.md#copy-sections-between-sites)) |
+| `replace` | target, `block` tree, `markup`, or `html` with exactly one root; optional `media_map` and `link_map` |
 | `move` | target; optional destination and `index` |
 | `remove` | target |
 | `insert_pattern` | registered `pattern` name; optional destination and `index` |
@@ -110,6 +110,25 @@ block support now stores under `style`, such as `textAlign`, refuses with
 takes serialized `<!-- wp:… -->` content parsed by the site's registrations;
 several root blocks become consecutive inserts. Invalid or unsupported markup
 refuses.
+
+`html` takes classic-editor HTML, such as classic post content or a rich-text
+custom field, without block comments. Blockwork converts it as the Classic
+block's Convert to blocks does. Blank lines become paragraphs and single line
+breaks become `<br>`, except inside `<pre>`. Gutenberg's own conversions then
+make paragraph, heading, list, quote, preformatted, image, and shortcode blocks,
+and Blockwork drops the empty paragraphs they leave behind. The root blocks
+become consecutive inserts, like `markup`, and each counts as one edit. An
+element with no block conversion, such as a form, refuses the edit with
+`html_not_convertible`, and `diagnostics.unconverted` names its tag. Rewrite or
+remove that element, or build it as a `block` tree. Send serialized block
+content as `markup`.
+
+```js
+await blockwork.edit({ edits: [
+  { op: "insert", parent_client_id: "section-id", index: 2,
+    html: "<h3>Early years</h3>\nFirst paragraph.\n\nSecond paragraph." },
+] });
+```
 
 ### Insert a footnote with its body
 
@@ -432,7 +451,7 @@ exact rules.
 - WordPress 7.0 or later. Calls on an older site, or on a wp-admin page that
   does not name its version, refuse with `wordpress_unsupported` before changing
   anything; `diagnostics.wordpress_version` and `minimum_version` say why.
-- 32 edits per call after markup expansion; 200 blocks per inserted tree; 15
+- 32 edits per call after markup and html expansion; 200 blocks per inserted tree; 15
   path levels; 2,000 blocks per document; 256 KiB of stored block content per
   document; 1 MiB per document read, including metadata and any rendered fields;
   256 KiB per other REST response read. `connect`, `read({source})`, and `prepare_save` refuse
@@ -512,7 +531,8 @@ exact rules.
 - A blank page's single unmodified default paragraph can be updated, replaced,
   or removed through its client ID.
 - Shared references are leaves; their content is a separate document target.
-  Bound blocks, raw HTML and classic content, and lock changes are out of scope.
+  Bound blocks, existing Custom HTML and Classic blocks, and lock changes are
+  out of scope. Classic HTML can still be inserted as blocks through `html`.
 - Inserting a Query first reads its editor preview (12-second budget). For an
   inherited Query, Gutenberg ignores taxonomy filters and adjusts the preview
   for supported template slugs. In the post editor without a template context,

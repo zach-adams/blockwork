@@ -155,6 +155,48 @@ test('copy an FAQ and refine its question and answer', async () => {
   });
 });
 
+test('insert classic HTML as native blocks and refuse raw fragments', async () => {
+  const image = await seedImage(site, { name: 'classic-photo', alt: 'Classic photo' });
+  const html = [
+    '<h3>Early years</h3>',
+    'First line\nsecond line',
+    'A <a href="/about/">linked</a> paragraph.',
+    '<ul>\n<li>One</li>\n<li>Two</li>\n</ul>',
+    '<pre>line one\nline two</pre>',
+    `<img class="alignnone size-full wp-image-${image.id}" src="${image.url}" alt="Classic photo" />`,
+  ].join('\n\n');
+  const seed = doc(group(heading('About')));
+  await withDocument(site, { content: seed }, async ({ blockwork, id, before }) => {
+    const refused = await blockwork.edit({
+      edits: [{ op: 'insert', parent: [0], html: `${html}\n\n<form><input name="email"></form>` }],
+    });
+    await assertRefused(site, id, before, refused, { error: 'html_not_convertible' });
+    assert.equal(refused.diagnostics.field, 'edits.0.html');
+    assert.deepEqual(refused.diagnostics.unconverted, [{ path: [6], tag: 'form' }]);
+    success(await blockwork.edit({ edits: [{ op: 'insert', parent: [0], html }] }));
+    await assertSavedCleanly(site, id, before, await blockwork.save());
+    const inserted = (await storedTree(site, id))[0].innerBlocks
+      .filter((block) => block.blockName)
+      .slice(1);
+    assert.deepEqual(
+      inserted.map((block) => block.blockName),
+      [
+        'core/heading',
+        'core/paragraph',
+        'core/paragraph',
+        'core/list',
+        'core/preformatted',
+        'core/image',
+      ],
+    );
+    assert.equal(inserted[1].innerHTML.trim(), '<p>First line<br>second line</p>');
+    assert.match(inserted[4].innerHTML, />line one(<br>|\n)line two</);
+    assert.equal(inserted[5].attrs.id, image.id);
+    const front = await frontEnd(site, id);
+    assert.ok(front.html.includes('<a href="/about/">linked</a>'));
+  });
+});
+
 test('copy a saved section from another page and retain its source', async () => {
   const section = group(heading('Our approach'), paragraph('We listen first.'));
   const source = await seedDocument(site, { content: doc(section, paragraph('Source only')) });

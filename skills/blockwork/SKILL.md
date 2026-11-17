@@ -115,8 +115,8 @@ cannot be included.
 | `op` | Fields |
 | --- | --- |
 | `update` | `client_id`, `attributes`, optional `unset` paths |
-| `insert` | `block` or serialized `markup`, optional `parent_client_id` and `index`; defaults to appending at root |
-| `replace` | `client_id`, `block` or `markup` with exactly one root |
+| `insert` | `block`, serialized `markup`, or classic `html`, optional `parent_client_id` and `index`; defaults to appending at root |
+| `replace` | `client_id`, `block`, `markup`, or `html` with exactly one root |
 | `move` | `client_id`, optional `parent_client_id` and `index`, counted after source removal |
 | `remove` | `client_id` |
 

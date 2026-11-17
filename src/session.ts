@@ -56,6 +56,7 @@ import {
 import {
   applyPlan,
   copyTree,
+  htmlBlocks,
   markupBlocks,
   needsNativePreparation,
   preparePlan,
@@ -1287,7 +1288,7 @@ async function read(context: Context, input: ReadInput): Promise<JsonObject> {
   };
 }
 
-// Authored markup becomes ordinary tree inserts before planning.
+// Authored markup and HTML become ordinary tree inserts before planning.
 function expandEdits(wp: WordPress, input: EditInput) {
   const edits = [];
 
@@ -1297,11 +1298,19 @@ function expandEdits(wp: WordPress, input: EditInput) {
       continue;
     }
 
-    const { markup, media_map: mediaMap, link_map: linkMap, ...rest } = edit;
+    const { markup, html, media_map: mediaMap, link_map: linkMap, ...rest } = edit;
+    const source = html === undefined ? 'markup' : 'html';
     let blocks;
 
     try {
-      const given = markup === undefined ? [rest.block] : markupBlocks(wp, markup, 'create');
+      let given = [rest.block];
+
+      if (markup !== undefined) {
+        given = markupBlocks(wp, markup, 'create');
+      } else if (html !== undefined) {
+        given = htmlBlocks(wp, html);
+      }
+
       const present = given.filter((block) => block !== undefined);
       blocks = mediaMap || linkMap ? retargetBlocks(present, mediaMap, linkMap) : present;
     } catch (error) {
@@ -1313,7 +1322,7 @@ function expandEdits(wp: WordPress, input: EditInput) {
         throw new BlockworkError(error.code, {
           ...error.diagnostics,
           edit_index: editIndex,
-          field: `edits.${editIndex}.${fields.get(error.code) ?? 'markup'}`,
+          field: `edits.${editIndex}.${fields.get(error.code) ?? source}`,
         });
       }
 
@@ -1323,7 +1332,7 @@ function expandEdits(wp: WordPress, input: EditInput) {
     if (rest.op === 'replace') {
       assert(blocks.length === 1, 'invalid_replacement_markup', {
         edit_index: editIndex,
-        field: `edits.${editIndex}.markup`,
+        field: `edits.${editIndex}.${source}`,
         block_count: blocks.length,
       });
       edits.push({ ...rest, block: blocks[0] });

@@ -3118,6 +3118,39 @@ export function markupBlocks(
   return blockInputs(wp, wp.blocks.parse(markup), purpose);
 }
 
+// Convert classic-editor HTML as the Classic block's Convert to blocks does:
+// its parser runs autop on classic content, then rawHandler makes blocks.
+// After autop, a newline outside <pre> is only whitespace, but a recreated
+// rich-text string reads it as another line break. Lifting an image out of
+// its autop paragraph leaves that paragraph empty.
+export function htmlBlocks(wp: WordPress, html: string): BlockInput[] {
+  const prepared = wp.autop
+    .autop(html)
+    .split(/(<pre[\s>][\s\S]*?<\/pre>)/i)
+    .map((part, index) =>
+      index % 2 ? part : part.replace(/\s*\n\s*/g, ' ').replace(/(<br\s*\/?>) /gi, '$1'),
+    )
+    .join('');
+  const converted = wp.blocks
+    .rawHandler({ HTML: prepared })
+    .filter((block) => !wp.blocks.isUnmodifiedDefaultBlock?.(block));
+  const raw = readTree(wp, converted).filter((row) =>
+    ['core/html', 'core/freeform'].includes(row.name),
+  );
+  assert(converted.length > 0 && raw.length === 0, 'html_not_convertible', {
+    block_count: converted.length,
+    unconverted: raw
+      .slice(0, 5)
+      .map((row) => ({
+        path: row.path,
+        tag:
+          /<([a-z][a-z0-9-]*)/i.exec(wp.blocks.serialize([row.block]))?.[1]?.toLowerCase() ?? null,
+      })),
+  });
+
+  return blockInputs(wp, converted, 'create');
+}
+
 function blockInputs(wp: WordPress, parsed: Block[], purpose: 'read' | 'create'): BlockInput[] {
   assert(parsed.length > 0, 'unsupported_markup');
   const parsedRows = readTree(wp, parsed);

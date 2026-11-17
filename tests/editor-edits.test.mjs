@@ -1461,6 +1461,36 @@ test('markup insertion expands into native block inputs and saves once', async (
   assert.equal((await f.save()).persistence, 'verified');
 });
 
+test('html insertion converts through autop and rawHandler and refuses raw fragments', async () => {
+  const f = fixture();
+  await f.call('connect');
+  const { wp } = f.window;
+  const paragraph = (content) => wp.blocks.createBlock('core/paragraph', { content });
+  wp.autop = { autop: (text) => text.split('\n\n').map((part) => part.startsWith('<') ? part : `<p>${part}</p>`).join('\n') };
+  wp.blocks.rawHandler = ({ HTML }) => [...HTML.matchAll(/<p>(.*?)<\/p>|(<form>.*?<\/form>)/g)]
+    .map(([, text, raw]) => raw ? wp.blocks.createBlock('core/html', { content: raw }) : paragraph(text));
+
+  const refused = await f.call('edit', { edits: [{ op: 'insert', html: 'Kept\n\n<form>Sign up</form>' }] });
+  assert.equal(refused.error, 'html_not_convertible', JSON.stringify(refused));
+  assert.equal(refused.diagnostics.field, 'edits.0.html');
+  assert.equal(JSON.stringify(refused.diagnostics.unconverted), '[{"path":[1],"tag":"form"}]');
+  assert.equal(JSON.stringify(refused).includes('Sign up'), false);
+  assert.equal(f.dirty, false);
+
+  const both = await f.call('edit', { edits: [{ op: 'insert', html: 'One', markup: wp.blocks.serialize([f.blocks[0]]) }] });
+  assert.equal(both.error, 'invalid_edit', JSON.stringify(both));
+
+  const replaced = await f.call('edit', { edits: [{ op: 'replace', client_id: f.blocks[0].clientId, html: 'One\n\nTwo' }] });
+  assert.equal(replaced.error, 'invalid_replacement_markup', JSON.stringify(replaced));
+  assert.equal(replaced.diagnostics.field, 'edits.0.html');
+
+  const edited = await f.call('edit', { edits: [{ op: 'insert', index: 1, html: 'First\n\n\n\nSecond' }] });
+  assert.equal(edited.ok, true, JSON.stringify(edited));
+  assert.equal(JSON.stringify(edited.changed.map((block) => block.preview)), '["First","Second"]');
+  assert.deepEqual(f.blocks.slice(1, 3).map((block) => block.attributes.content), ['First', 'Second']);
+  assert.equal((await f.save()).persistence, 'verified');
+});
+
 test('markup insertion normalizes native rich text before attribute validation', async () => {
   const f = fixture();
   await f.call('connect');

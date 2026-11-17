@@ -402,6 +402,7 @@ export const EditSchema = v.pipe(
     {
       block: v.optional(BlockInputSchema),
       markup: v.optional(markup),
+      html: v.optional(markup),
       media_map: v.optional(MediaMapSchema),
       link_map: v.optional(LinkMapSchema),
     },
@@ -429,10 +430,9 @@ export const EditSchema = v.pipe(
   v.forward(
     v.check(
       (edit) =>
-        !['insert', 'replace'].includes(edit.op) ||
-        ('block' in edit && edit.block !== undefined) !==
-          ('markup' in edit && edit.markup !== undefined),
-      'Provide exactly one of block or markup',
+        (edit.op !== 'insert' && edit.op !== 'replace') ||
+        [edit.block, edit.markup, edit.html].filter((value) => value !== undefined).length === 1,
+      'Provide exactly one of block, markup, or html',
     ),
     ['block'],
   ),
