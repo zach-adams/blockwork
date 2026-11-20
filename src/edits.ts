@@ -23,7 +23,10 @@ import {
   boundAttributes,
   collapseNewlines,
   postDateField,
-  rawContent,
+  rawContentConstraint,
+  customHTMLContent,
+  customHTMLBody,
+  requireExactCustomHTML,
   containsPath,
   containerRestriction,
   editRestriction,
@@ -145,11 +148,19 @@ function copyAttributes(attributes: JsonObject): JsonObject {
 }
 
 export function copyTree(blocks: Block[]): Block[] {
-  return blocks.map((block) => ({
-    ...block,
-    attributes: copyAttributes(block.attributes),
-    innerBlocks: copyTree(block.innerBlocks ?? []),
-  }));
+  return blocks.map((block) => {
+    const copy = {
+      ...block,
+      attributes: copyAttributes(block.attributes),
+      innerBlocks: copyTree(block.innerBlocks ?? []),
+    };
+
+    if (block.innerContent) {
+      copy.innerContent = [...block.innerContent];
+    }
+
+    return copy;
+  });
 }
 
 function at(blocks: Block[], path: number[]): Block {
@@ -378,16 +389,21 @@ function checkBindingPermission(wp: WordPress, edit: Edit): void {
   );
 }
 
+function checkRawContentPermission(wp: WordPress, name: string): void {
+  const constraint = rawContentConstraint(wp, name);
+  assert(!constraint, 'unsupported_block', { block_name: name, reason: 'raw_content', constraint });
+}
+
 function nesting(wp: WordPress, block: Block, ancestors: Block[]): void {
   const type = wp.blocks.getBlockType(block.name);
   assert(type && block.name !== 'core/missing', 'unsupported_block', {
     block_name: diagnosticKey(block.name),
     reason: 'missing_registration',
   });
-  assert(!rawContent(block.name), 'unsupported_block', {
-    block_name: block.name,
-    reason: 'raw_content',
-    constraint: 'raw_content',
+  checkRawContentPermission(wp, block.name);
+  assert(!ancestors.some((ancestor) => ancestor.name === 'core/html'), 'invalid_nesting', {
+    block_name: 'core/html',
+    constraint: 'custom_html_leaf',
   });
   const parent = ancestors.at(-1);
   assert(
@@ -585,6 +601,20 @@ function checkPolicy(
         ),
         'unsupported_target_or_subtree',
       );
+
+      if (edit.op === 'update' && block.name === 'core/html') {
+        assert(
+          !Object.hasOwn(edit.attributes, 'content') &&
+            !edit.unset.some(([key]) => key === 'content'),
+          'unsupported_attribute',
+          {
+            block_name: block.name,
+            attribute: 'content',
+            constraint: 'custom_html_requires_replace',
+          },
+        );
+      }
+
       const issue = bindingIssue(wp, block);
       assert(!issue, 'bound_block_unsupported', issue);
       assert(row.support === 'supported', 'block_not_editable', {
@@ -898,12 +928,38 @@ function updateAttributes(
   return updates;
 }
 
+function createCustomHTML(wp: WordPress, values: JsonObject, children: Block[]): Block {
+  const { content = '', ...attributes } = values;
+  assert(!children.length, 'invalid_nesting', {
+    block_name: 'core/html',
+    constraint: 'custom_html_leaf',
+  });
+  assert(typeof content === 'string', 'invalid_attribute_value', {
+    block_name: 'core/html',
+    attribute: 'content',
+    expected_type: 'string',
+  });
+
+  const local = wp.blocks.getBlockType('core/html')?.attributes?.content?.role === 'local';
+  const block = local
+    ? wp.blocks.createBlock('core/html', attributes, [], [content])
+    : wp.blocks.createBlock('core/html', { ...attributes, content });
+  assert(customHTMLContent(wp, block) === content, 'unsupported_markup', {
+    block_name: 'core/html',
+    attribute: 'content',
+    constraint: 'custom_html_exact_content',
+  });
+
+  return block;
+}
+
 function create(wp: WordPress, input: BlockInput, depth = 0, count = { value: 0 }): Block {
   assert(depth < 15 && ++count.value <= 200, 'tree_too_large');
   assert(
     !['core/block', 'core/navigation', 'core/template-part'].includes(input.name),
     'reference_operation_required',
   );
+  checkRawContentPermission(wp, input.name);
   const registered = wp.blocks.getBlockType(input.name)?.attributes ?? {};
   // read results and parsed markup include a lock attribute's registered
   // default, such as an Accordion panel's templateLock: false. On a new block
@@ -919,11 +975,11 @@ function create(wp: WordPress, input: BlockInput, depth = 0, count = { value: 0 
   );
   attributes(wp, input.name, values);
 
-  const block = wp.blocks.createBlock(
-    input.name,
-    values,
-    (input.inner_blocks ?? []).map((child) => create(wp, child, depth + 1, count)),
-  );
+  const children = (input.inner_blocks ?? []).map((child) => create(wp, child, depth + 1, count));
+  const block =
+    input.name === 'core/html'
+      ? createCustomHTML(wp, values, children)
+      : wp.blocks.createBlock(input.name, values, children);
   const issue = bindingIssue(wp, block);
   assert(!issue, 'bound_block_unsupported', issue);
 
@@ -1093,6 +1149,11 @@ function savedState(wp: WordPress, rows: BlockSummary[], ignored = new Map<strin
       attributes: Object.fromEntries(
         Object.entries(state.attributes).filter(([key]) => {
           const schema = registered[key];
+
+          // Custom HTML projects its saved inner content onto this local attribute.
+          if (state.name === 'core/html' && key === 'content') {
+            return true;
+          }
 
           if (ignored.get(rows[index].path.join('.'))?.has(key)) {
             return false;
@@ -1758,7 +1819,9 @@ function checkInitialSerialization(
   content: string,
   target: Target,
 ) {
-  const normalization = wp.blocks.serialize(original) !== content;
+  const serialized = wp.blocks.serialize(original);
+  requireExactCustomHTML(wp, content, serialized);
+  const normalization = serialized !== content;
   // Gutenberg omits a single unmodified default block from document content.
   // Keep its live identity so the inspected placeholder can still be edited.
   const emptyPlaceholder =
@@ -1864,23 +1927,48 @@ async function detachPattern(wp: WordPress, target: Target, block: Block): Promi
   const post = v.parse(PostSchema, await postRecord(wp, '/wp/v2/blocks', id, fields, 'view'));
   checkSharedRecord(post, { ...target, post_type: 'wp_block', post_id: id });
   // A background reference may never mount; core-data still holds live pattern edits.
-  const edited = wp.data.select('core').getEditedEntityRecord?.('postType', 'wp_block', id);
-  let source = edited && edited.blocks;
+  const edited =
+    wp.data.select('core').getEditedEntityRecord?.('postType', 'wp_block', id) || undefined;
+  let markup = post.content.raw;
 
-  if (!source) {
-    let markup = post.content.raw;
-
-    if (edited) {
-      const raw = typeof edited.content === 'function' ? edited.content(edited) : edited.content;
-      markup = typeof raw === 'string' ? raw : raw.raw;
-    }
-
-    checkContentSize(markup);
-    source = wp.blocks.parse(markup);
+  if (edited) {
+    const raw = typeof edited.content === 'function' ? edited.content(edited) : edited.content;
+    markup = typeof raw === 'string' ? raw : raw.raw;
   }
 
-  assert(validity(readTree(wp, source)).valid, 'detach_pattern_unsupported');
-  checkContentSize(wp.blocks.serialize(source));
+  checkContentSize(markup);
+  const source = edited?.blocks ?? wp.blocks.parse(markup);
+  const rows = readTree(wp, source);
+  assert(validity(rows).valid, 'detach_pattern_unsupported');
+  const html = rows.filter((row) => row.name === 'core/html');
+  const serialized = wp.blocks.serialize(source);
+  requireExactCustomHTML(wp, markup, serialized);
+
+  if (typeof edited?.content === 'function' && html.length) {
+    // Core-data can expose the already serialized draft as a callable edit.
+    // Inspect the saved source and the live fragments before they can lose padding.
+    const stored = post.content.raw;
+    checkContentSize(stored);
+    requireExactCustomHTML(wp, stored, wp.blocks.serialize(wp.blocks.parse(stored)));
+
+    for (const row of html) {
+      const body = row.block.innerContent?.join('');
+      assert(
+        body === undefined ||
+          body === row.attributes.content ||
+          customHTMLBody(body) === row.attributes.content,
+        'unsupported_markup',
+        {
+          block_name: row.name,
+          target_path: row.path,
+          attribute: 'content',
+          constraint: 'custom_html_exact_content',
+        },
+      );
+    }
+  }
+
+  checkContentSize(serialized);
   const overrides = block.attributes.content;
   const clone = (item: Block): Block => {
     const values = copyAttributes(item.attributes);
@@ -1917,7 +2005,10 @@ async function detachPattern(wp: WordPress, target: Target, block: Block): Promi
     return wp.blocks.cloneBlock(item, values, (item.innerBlocks ?? []).map(clone));
   };
 
-  return source.map(clone);
+  const cloned = source.map(clone);
+  requireExactCustomHTML(wp, serialized, wp.blocks.serialize(cloned));
+
+  return cloned;
 }
 
 async function preparePatternInsertion(
@@ -1941,6 +2032,7 @@ async function preparePatternInsertion(
   assert(parsed.length > 0, 'unsupported_pattern');
   const parsedRows = readTree(wp, parsed);
   assert(validity(parsedRows).valid, 'unsupported_pattern');
+  requireExactCustomHTML(wp, item.content, wp.blocks.serialize(parsed));
 
   const prepared = await prepareEmptyComments(
     wp,
@@ -2026,14 +2118,15 @@ async function prepareVariationInsertion(
   );
 
   assert(item, 'stale_variation');
+  const children = wp.blocks.createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? []);
+  assert(
+    edit.name !== 'core/html' && !readTree(wp, children).some((row) => row.name === 'core/html'),
+    'unsupported_block',
+    { block_name: 'core/html', constraint: 'custom_html_variation' },
+  );
+  const inner_blocks = children.map((block) => blockInput(wp, block));
   attributes(wp, edit.name, edit.attributes);
-  create(wp, {
-    name: edit.name,
-    attributes: item.attributes,
-    inner_blocks: wp.blocks
-      .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
-      .map((block) => blockInput(wp, block)),
-  });
+  create(wp, { name: edit.name, attributes: item.attributes, inner_blocks });
   // A variation's bindings define it, so requested values and bindings may
   // add to them but never replace them.
   const values = { ...item.attributes, ...edit.attributes };
@@ -2051,15 +2144,7 @@ async function prepareVariationInsertion(
     values.metadata = mergedMetadata(item.attributes.metadata, edit.attributes.metadata);
   }
 
-  const inserted = [
-    create(wp, {
-      name: edit.name,
-      attributes: values,
-      inner_blocks: wp.blocks
-        .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
-        .map((block) => blockInput(wp, block)),
-    }),
-  ];
+  const inserted = [create(wp, { name: edit.name, attributes: values, inner_blocks })];
 
   return inserted;
 }
@@ -3160,7 +3245,14 @@ export function markupBlocks(
   markup: string,
   purpose: 'read' | 'create',
 ): BlockInput[] {
-  return blockInputs(wp, wp.blocks.parse(markup), purpose);
+  const parsed = wp.blocks.parse(markup);
+  const inputs = blockInputs(wp, parsed, purpose);
+
+  if (purpose === 'create') {
+    requireExactCustomHTML(wp, markup, wp.blocks.serialize(parsed));
+  }
+
+  return inputs;
 }
 
 // Convert classic-editor HTML as the Classic block's Convert to blocks does:
@@ -3215,6 +3307,15 @@ function tidyConverted(wp: WordPress, blocks: Block[]): Block[] {
 function blockInputs(wp: WordPress, parsed: Block[], purpose: 'read' | 'create'): BlockInput[] {
   assert(parsed.length > 0, 'unsupported_markup');
   const parsedRows = readTree(wp, parsed);
+
+  if (purpose === 'create') {
+    for (const row of parsedRows) {
+      if (row.name === 'core/html') {
+        checkRawContentPermission(wp, row.name);
+      }
+    }
+  }
+
   assert(validity(parsedRows).valid, 'unsupported_markup', {
     invalid: validity(parsedRows).invalid.slice(0, 5),
     unsupported: validity(parsedRows).unsupported.slice(0, 5),

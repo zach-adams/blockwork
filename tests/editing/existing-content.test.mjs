@@ -198,7 +198,6 @@ for (const [name, existing] of Object.entries(samples)) {
             const ownSearch = await blockwork.read({ blocks: { search: needle } });
             assert.equal(ownSearch.ok, true, JSON.stringify(ownSearch));
             const originalOnly = [
-              'html',
               'invalid',
               'missing_wrapper',
               'unknown',
@@ -266,7 +265,7 @@ for (const [name, existing] of Object.entries(samples)) {
             ],
           });
 
-          if (name === 'json' || name === 'json_key_order')
+          if (['html', 'json', 'json_key_order'].includes(name))
             assert.equal(result.ok, true, JSON.stringify(result));
 
           if (!result.ok) {
@@ -538,6 +537,146 @@ for (const operation of ['move', 'remove']) {
     },
   );
 }
+
+const mapHTML = '<iframe src="https://example.test/?a=1&amp;b=2" title="Map"></iframe>';
+const scriptHTML = '<script>/* Blockwork test */\n  void "a & b";\n</script>';
+
+test('Custom HTML embeds from block and markup save and read exactly', async () => {
+  await withDocument(site, { content: anchor }, async ({ blockwork, id, before }) => {
+    const trimmed = await blockwork.edit({
+      edits: [{ op: 'insert', markup: block('html', undefined, '  ' + mapHTML) }],
+    });
+    await assertRefused(site, id, before, trimmed, { error: 'unsupported_markup' });
+    assert.equal(trimmed.diagnostics.constraint, 'custom_html_exact_content');
+    assert.equal(trimmed.editor_result, 'not_applied');
+
+    const inserts = [mapHTML, scriptHTML].flatMap((content) => [
+      { op: 'insert', block: { name: 'core/html', attributes: { content } } },
+      { op: 'insert', markup: block('html', undefined, content) },
+    ]);
+    const edited = await blockwork.edit({ edits: inserts });
+    assert.equal(edited.ok, true, JSON.stringify(edited));
+    const read = await blockwork.read({ blocks: { name: 'core/html', attributes: true } });
+    const embeds = [mapHTML, mapHTML, scriptHTML, scriptHTML];
+    assert.equal(read.ok, true, JSON.stringify(read));
+    assert.deepEqual(read.blocks.map((item) => item.attributes.content), embeds);
+    const { after } = await assertSavedCleanly(site, id, before, await blockwork.save());
+    assert.equal(after.content, doc(anchor, ...embeds.map((html) => block('html', undefined, html))));
+  });
+});
+
+test('Custom HTML supports moves, removals and replacements', async () => {
+  const map = block('html', undefined, mapHTML);
+  const script = block('html', undefined, scriptHTML);
+  const end = paragraph('Keep this paragraph');
+
+  await withDocument(
+    site,
+    { content: doc(map, anchor, script, end) },
+    async ({ blockwork, doc: connected, id, before }) => {
+      const [mapBlock, neighbor, scriptBlock, last] = connected.blocks;
+      const read = await blockwork.read({ blocks: { client_id: mapBlock.client_id } });
+      assert.equal(read.ok, true, JSON.stringify(read));
+      const { name, attributes } = read.blocks[0];
+      const update = await blockwork.edit({
+        edits: [{ op: 'update', client_id: mapBlock.client_id, attributes: { content: scriptHTML } }],
+      });
+      await assertRefused(site, id, before, update, { error: 'unsupported_attribute' });
+      assert.equal(update.diagnostics.constraint, 'custom_html_requires_replace');
+      assert.match(update.hint, /replace/);
+
+      const edited = await blockwork.edit({
+        edits: [
+          { op: 'remove', client_id: neighbor.client_id },
+          { op: 'move', client_id: mapBlock.client_id, index: 2 },
+          { op: 'remove', client_id: scriptBlock.client_id },
+        ],
+      });
+      assert.equal(edited.ok, true, JSON.stringify(edited));
+      const moved = await assertSavedCleanly(site, id, before, await blockwork.save());
+      assert.equal(moved.after.content, doc(end, map));
+
+      const replaced = await blockwork.edit({
+        edits: [
+          { op: 'replace', client_id: last.client_id, block: { name, attributes } },
+          { op: 'replace', client_id: mapBlock.client_id, markup: script },
+        ],
+      });
+      assert.equal(replaced.ok, true, JSON.stringify(replaced));
+      const saved = await assertSavedCleanly(site, id, moved.after, await blockwork.save());
+      assert.equal(saved.after.content, doc(map, script));
+    },
+  );
+});
+
+test('a post with Custom HTML can be retitled and published', async () => {
+  const content = doc(block('html', undefined, mapHTML), anchor);
+  const title = 'Blockwork published embed';
+
+  await withDocument(site, { content }, async ({ blockwork, id, before }) => {
+    const edited = await blockwork.edit({ post: { title, status: 'publish' } });
+    assert.equal(edited.ok, true, JSON.stringify(edited));
+    const { after } = await assertSavedCleanly(site, id, before, await blockwork.save(), {
+      allow: ['title', 'status', 'date', 'slug'],
+    });
+    assert.equal(after.title, title);
+    assert.equal(after.status, 'publish');
+    assert.equal(after.content, content);
+  });
+});
+
+test('an attached save includes a user deletion of padded Custom HTML', async () => {
+  const padded = block('html', undefined, '\n' + mapHTML + '\n');
+
+  await withDocument(
+    site,
+    { content: doc(padded, anchor) },
+    async ({ blockwork, doc: connected, tab, id, before }) => {
+      assert.ok(before.content.includes(padded));
+      const planned = await blockwork.edit({ post: { title: 'Blockwork planned title' } });
+      await assertRefused(site, id, before, planned, { error: 'unsupported_markup' });
+      assert.equal(planned.diagnostics.constraint, 'custom_html_exact_content');
+      assert.equal(planned.editor_result, 'not_applied');
+
+      const clientId = connected.blocks[0].client_id;
+      await site.evaluate(
+        tab,
+        "wp.data.dispatch('core/block-editor').removeBlocks(" + JSON.stringify([clientId]) + ')',
+      );
+      const saved = await blockwork.save({ save_all_pending: true });
+      const { after } = await assertSavedCleanly(site, id, before, saved);
+      assert.equal(saved.saved_all_pending, true);
+      assert.equal(after.content, anchor);
+    },
+    { workflow: 'attached' },
+  );
+});
+
+test('a lower privilege editor cannot insert Custom HTML', async () => {
+  await site.php("get_role('editor')->remove_cap('unfiltered_html');");
+  await site.signIn('editor');
+
+  try {
+    await withDocument(site, { content: anchor }, async ({ blockwork, id, before }) => {
+      for (const edit of [
+        { op: 'insert', block: { name: 'core/html', attributes: { content: mapHTML } } },
+        { op: 'insert', markup: block('html', undefined, mapHTML) },
+      ]) {
+        const result = await blockwork.edit({ edits: [edit] });
+        await assertRefused(site, id, before, result, { error: 'unsupported_block' });
+        assert.equal(result.diagnostics.constraint, 'unfiltered_html_required');
+        assert.equal(result.editor_result, 'not_applied');
+      }
+
+      const read = await blockwork.read({ blocks: 'all' });
+      assert.equal(read.dirty, false);
+      assert.deepEqual(read.blocks.map((item) => item.name), ['core/paragraph']);
+    });
+  } finally {
+    await site.signIn('admin');
+    await site.php("get_role('editor')->add_cap('unfiltered_html');");
+  }
+});
 
 test('a lower privilege save reports filtered existing HTML', async (t) => {
   await site.php("get_role('editor')->remove_cap('unfiltered_html');");

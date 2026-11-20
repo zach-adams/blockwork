@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bundles } from '../tools/bundle.mjs';
-import { source, target, changes, copy, outsideDebug, fixture, defaultRoundTripFixture, mixedFixture, linkFixture, patternSectionFixture } from './helpers/editor-fixture.mjs';
+import { source, target, changes, copy, outsideDebug, fixture, defaultRoundTripFixture, mixedFixture, linkFixture, patternSectionFixture, storedMarkup, customHTMLMarkupFixture } from './helpers/editor-fixture.mjs';
 
 test('saved record refusals name differing fields and meta keys without values', async () => {
   for (const initial of [true, false]) {
@@ -330,9 +330,11 @@ test('raw content refusals name the Custom HTML block', async () => {
 
   const inserted = await f.edit([{ op: 'insert', block: { name: 'core/html', attributes: { content: '<iframe></iframe>' } } }]);
   assert.deepEqual(
-    [inserted.error, inserted.diagnostics.block_name, inserted.diagnostics.reason],
-    ['unsupported_block', 'core/html', 'raw_content'],
+    [inserted.error, inserted.diagnostics.block_name, inserted.diagnostics.reason, inserted.diagnostics.constraint],
+    ['unsupported_block', 'core/html', 'raw_content', 'unfiltered_html_required'],
   );
+  assert.match(inserted.hint, /unfiltered HTML/);
+  assert.equal(f.dirty, false);
 
   f.blocks.push({ name: 'core/html', clientId: 'html', attributes: { content: 'Raw' }, innerBlocks: [], isValid: true });
   f.syncContent();
@@ -345,6 +347,114 @@ test('raw content refusals name the Custom HTML block', async () => {
   assert.equal(settings.error, 'unsupported_settings_document');
   assert.deepEqual(copy(settings.diagnostics.unsupported), raw);
   assert.equal(f.saves, 0);
+});
+
+test('Custom HTML uses native content storage and reports server rewrites', async () => {
+  for (const modern of [false, true]) {
+    const f = fixture();
+    f.unfilteredHTML = true;
+
+    if (modern) f.registrations['core/html'].attributes.content = { type: 'string', role: 'local' };
+
+    const html = '<iframe src="https://example.test/?a=1&b=2" title="Map"></iframe>';
+    const inserted = await f.edit([{ op: 'insert', block: { name: 'core/html', attributes: { content: html } } }]);
+    assert.equal(inserted.ok, true, JSON.stringify(inserted));
+
+    const live = f.blocks.at(-1);
+    assert.equal(live.attributes.content, modern ? undefined : html);
+    assert.deepEqual(live.innerContent, modern ? [html] : undefined);
+    const read = await f.call('read', {
+      blocks: { client_id: live.clientId },
+      attribute_guide: { client_id: live.clientId },
+    });
+    assert.equal(read.blocks[0].attributes.content, html);
+    const content = read.attribute_guide.attributes.find((attribute) => attribute.name === 'content');
+    assert.equal(content.editable, false);
+    assert.match(content.use_instead, /replace/);
+
+    const update = await f.edit([{ op: 'update', client_id: live.clientId, attributes: { content: '<p>Changed</p>' } }]);
+    assert.equal(update.diagnostics.constraint, 'custom_html_requires_replace');
+    assert.match(update.hint, /replace/);
+
+    const [before, after] = modern
+      ? ['"innerContent":["<iframe', '"innerContent":["  <iframe']
+      : ['title=\\"Map\\"', 'title=\\"Changed\\"'];
+    f.duringSave = () => { f.post.content.raw = f.post.content.raw.replace(before, after); };
+
+    const saved = await f.save();
+    assert.equal(saved.error, 'verification_mismatch', JSON.stringify(saved));
+    assert.notEqual(saved.persistence, 'verified');
+  }
+});
+
+test('legacy Custom HTML padding refuses intake and existing document normalization', async () => {
+  const padded = '<!-- wp:html -->\n\n<b>x</b>\n\n<!-- /wp:html -->';
+  const intake = customHTMLMarkupFixture(fixture());
+  const inserted = await intake.edit([{ op: 'insert', markup: padded }]);
+  assert.equal(inserted.diagnostics.constraint, 'custom_html_exact_content', JSON.stringify(inserted));
+  assert.equal(intake.dirty, false);
+
+  const existing = customHTMLMarkupFixture(fixture());
+  existing.blocks = existing.window.wp.blocks.parse(padded);
+  storedMarkup(existing, padded);
+  const connected = await existing.call('connect');
+  assert.equal(connected.ok, true, JSON.stringify(connected));
+  assert.equal(connected.normalization_required, false);
+  const refused = await existing.call('edit', { post: { title: 'Changed' } });
+  assert.equal(refused.diagnostics.constraint, 'custom_html_exact_content', JSON.stringify(refused));
+  assert.equal(existing.dirty, false);
+  assert.equal(existing.saves, 0);
+});
+
+test('registered Custom HTML variations refuse before inserting', async () => {
+  const f = fixture();
+  f.unfilteredHTML = true;
+  const html = '<b>Registered HTML</b>';
+  f.registrations['core/html'].attributes.content = { type: 'string', role: 'local' };
+  f.registrations['core/html'].variations = [{ name: 'html-banner', innerContent: [html] }];
+  f.registrations['core/group'].variations = [{
+    name: 'group-banner',
+    innerBlocks: [['core/html', {}, [], [html]]],
+  }];
+  const before = copy(f.blocks);
+
+  for (const [name, variation] of [['core/html', 'html-banner'], ['core/group', 'group-banner']]) {
+    const result = await f.edit([{ op: 'insert_variation', name, variation }]);
+    assert.equal(result.diagnostics.constraint, 'custom_html_variation', JSON.stringify(result));
+    assert.match(result.hint, /ordinary insert/);
+    assert.equal(result.editor_result, 'not_applied');
+  }
+
+  assert.deepEqual(f.blocks, before);
+  assert.equal(f.dirty, false);
+});
+
+test('nested Custom HTML and its children are unsupported throughout the edit API', async () => {
+  const f = fixture();
+  f.unfilteredHTML = true;
+  f.registrations['core/html'].attributes.content = { type: 'string', role: 'local' };
+  const wp = f.window.wp;
+  const child = wp.blocks.createBlock('core/paragraph', { content: 'Nested' });
+  const html = wp.blocks.createBlock('core/html', {}, [child], ['<div>', null, '</div>']);
+  f.blocks.push(html);
+  f.syncContent();
+  assert.equal((await f.call('connect')).ok, true);
+  const read = await f.call('read', { blocks: { client_id: html.clientId, depth: 1 } });
+  assert.equal(read.ok, true, JSON.stringify(read));
+  assert.deepEqual(
+    copy(read.blocks.map(({ support, reason, editable, removable }) => [support, reason, editable, removable])),
+    [['unsupported', 'raw_content', false, false], ['unsupported', 'raw_content', false, false]],
+  );
+  const before = copy(f.blocks);
+  const update = await f.edit([{ op: 'update', client_id: child.clientId, attributes: { content: 'Changed' } }]);
+  assert.equal(update.error, 'unsupported_target_or_subtree', JSON.stringify(update));
+  const remove = await f.edit([{ op: 'remove', client_id: html.clientId }]);
+  assert.equal(remove.error, 'unsupported_structural_edit', JSON.stringify(remove));
+  const copied = await f.edit([{ op: 'insert', markup: wp.blocks.serialize([html]) }]);
+  assert.equal(copied.error, 'unsupported_markup', JSON.stringify(copied));
+  assert.equal(copied.diagnostics.unsupported[0].reason, 'raw_content');
+  assert.deepEqual(f.blocks, before);
+  assert.equal(f.dirty, false);
 });
 
 test('REST GET fixture selects top-level, nested and link fields with parent precedence', async () => {
@@ -1535,6 +1645,7 @@ test('markup insertion expands into native block inputs and saves once', async (
 
 test('html insertion converts through autop and rawHandler and refuses raw fragments', async () => {
   const f = fixture();
+  f.unfilteredHTML = true;
   await f.call('connect');
   const { wp } = f.window;
   const paragraph = (content) => wp.blocks.createBlock('core/paragraph', { content });

@@ -41,7 +41,7 @@ import {
 } from './errors';
 import {
   blockState,
-  storedState,
+  customHTMLBytes,
   storedMismatches,
   customBlocks,
   liveRow,
@@ -118,7 +118,7 @@ import {
 import { entityToken, mediaEdits } from './resources';
 import { nativeNormalization, plannedContent, templateFills } from './catalog';
 import { canonical, hash, same } from './values';
-import { contentlessHash, receiptMatch } from './persistence';
+import { blocksHash, contentlessHash, receiptMatch } from './persistence';
 import { measureBlocks } from './measure';
 import { requireCanvas, showVisualEditor } from './canvas';
 import { pause, remainingMs } from './timing';
@@ -2685,7 +2685,7 @@ async function prepareSave(context: Context, saveAllPending?: boolean): Promise<
     original_hash: await hash(original),
     desired_hash: await hash(desired),
     fields_hash: await contentlessHash(desired),
-    block_hash: await hash(storedState(wp, parsed)),
+    block_hash: await blocksHash(wp, live.content.raw, parsed),
     unsupported_block_count: validity(parsed).unsupported.length,
     date_fields: dates,
     generated_slug: generatesSlug || undefined,
@@ -2892,6 +2892,12 @@ async function save(
         ),
     );
     const blocks = storedMismatches(wp, prepared.rows, savedRows);
+    const customHTMLChanged =
+      typeof prepared.desired.content === 'string' &&
+      !same(
+        customHTMLBytes(wp, prepared.desired.content),
+        customHTMLBytes(wp, persisted.content.raw),
+      );
     const explained =
       changes.length > 0 &&
       differences.every((path) => {
@@ -2908,12 +2914,17 @@ async function save(
 
         return defaultTerm || (!same(before, desired) && !same(before, stored));
       });
-    assert(!blocks.blocks.length && !blocks.truncated && explained, 'verification_mismatch', {
-      meta_boxes: metaBoxes,
-      fields: fieldNames(differences),
-      blocks: blocks.blocks,
-      blocks_truncated: blocks.truncated,
-    });
+    assert(
+      !blocks.blocks.length && !blocks.truncated && !customHTMLChanged && explained,
+      'verification_mismatch',
+      {
+        meta_boxes: metaBoxes,
+        fields: fieldNames(differences),
+        blocks: blocks.blocks,
+        blocks_truncated: blocks.truncated,
+        custom_html_changed: customHTMLChanged || undefined,
+      },
+    );
   }
 
   const storedDifferently = differences.length > 0;

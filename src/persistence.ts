@@ -1,6 +1,6 @@
-import type { JsonObject, Receipt } from './contracts';
+import type { BlockSummary, JsonObject, Receipt } from './contracts';
 import type { WordPress } from './wordpress';
-import { readTree, storedState } from './inspection';
+import { customHTMLBytes, readTree, storedState } from './inspection';
 import { hash } from './values';
 
 export function contentlessHash(fields: JsonObject): Promise<string> {
@@ -9,8 +9,15 @@ export function contentlessHash(fields: JsonObject): Promise<string> {
   return hash(rest);
 }
 
-export async function blocksHash(wp: WordPress, content: string): Promise<string> {
-  return hash(storedState(wp, readTree(wp, wp.blocks.parse(content))));
+export async function blocksHash(
+  wp: WordPress,
+  content: string,
+  rows: BlockSummary[] = readTree(wp, wp.blocks.parse(content)),
+): Promise<string> {
+  const blocks = storedState(wp, rows);
+  const custom_html = customHTMLBytes(wp, content);
+
+  return hash(custom_html === undefined ? blocks : { blocks, custom_html });
 }
 
 // Matching parsed blocks also accepts PHP re-serialization when every other

@@ -6,6 +6,7 @@ export interface Block {
   clientId: string;
   attributes: JsonObject;
   innerBlocks?: Block[];
+  innerContent?: Array<string | null>;
   isValid?: boolean;
   originalContent?: string;
 }
@@ -103,6 +104,7 @@ interface Editor {
   getEditedPostContent(): string;
   getEditorBlocks?(): Block[];
   getEditorMode?(): string;
+  canUserUseUnfilteredHTML?(): boolean;
   isEditedPostDirty(): boolean;
   isSavingPost(): boolean;
   isAutosavingPost?(): boolean;
@@ -290,7 +292,13 @@ export interface WordPress {
     getBlockTypes(): Registration[];
     isUnmodifiedDefaultBlock?(block: Block): boolean;
     getBlockVariations?(name: string, scope: string): Variation[];
-    createBlock(name: string, attributes?: JsonObject, innerBlocks?: Block[]): Block;
+    createBlock(
+      name: string,
+      attributes?: JsonObject,
+      innerBlocks?: Block[],
+      innerContent?: Array<string | null>,
+    ): Block;
+    getBlockContent?(block: Block): string;
     createBlocksFromInnerBlocksTemplate(template: JsonValue[]): Block[];
     synchronizeBlocksWithTemplate(blocks: Block[], template: JsonValue[]): Block[];
     serialize(blocks: Block[]): string;

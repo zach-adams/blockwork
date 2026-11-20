@@ -105,15 +105,16 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
     'core/paragraph': { attributes: { content: { type: 'rich-text' }, dropCap: { type: 'boolean' } } },
     'example/card': { attributes: { variant: { type: 'string', enum: ['plain', 'accent'] } } },
     'core/group': { attributes: { className: { type: 'string' }, style: { type: 'object' }, layout: { type: 'object' }, allowedBlocks: { type: 'array' } } },
-    'core/html': { attributes: { content: { type: 'string' } } },
+    'core/html': { attributes: { content: { type: 'string', source: 'raw' } } },
     'core/navigation': { attributes: { ref: { type: 'number' } } },
   };
 
   for (const [name, registration] of Object.entries(registrations)) registration.name = name;
 
-  const plain = (list) => list.map(({ name, attributes, innerBlocks }) => ({ name,
+  const plain = (list) => list.map(({ name, attributes, innerBlocks, innerContent }) => ({ name,
     attributes: Object.fromEntries(Object.entries(attributes).filter(([key]) => registrations[name]?.attributes?.[key]?.role !== 'local')),
-    innerBlocks: plain(innerBlocks || []) }));
+    innerBlocks: plain(innerBlocks || []),
+    innerContent }));
 
   const serialize = (list) => plain(list).map((block) => JSON.stringify(block)).join('\n\n');
 
@@ -191,6 +192,7 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
 
   const editor = {
     getCurrentPost: () => copy(f.loadedPost ?? f.post),
+    canUserUseUnfilteredHTML: () => f.unfilteredHTML ?? false,
     getCurrentPostId: () => f.post.id, getCurrentPostType: () => f.post.type,
     getEditedPostAttribute: (name) => f.postEdits?.[name] ?? (f.post[name]?.raw ?? f.post[name]),
     getEditedPostContent: () => serialize(f.blocks), getEditorBlocks: () => f.blocks,
@@ -210,8 +212,8 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
     getTemplateLock: () => f.templateLock || false,
     getBlockListSettings: () => f.missingContext ? undefined : {},
     canRemoveBlocks: () => !f.removeLocked, canMoveBlock: () => !f.moveLocked, canInsertBlocks: () => !f.insertLocked,
-    canInsertBlockType: (name, parent) => !f.insertLocked && !f.templateLock && name !== 'core/html' && parent !== 'blocked-parent',
-    getInserterItems: () => Object.keys(registrations).map((name) => ({ name, title: name, isDisabled: name === 'core/html' })) };
+    canInsertBlockType: (name, parent) => !f.insertLocked && !f.templateLock && (name !== 'core/html' || f.unfilteredHTML) && parent !== 'blocked-parent',
+    getInserterItems: () => Object.keys(registrations).map((name) => ({ name, title: name, isDisabled: name === 'core/html' && !f.unfilteredHTML })) };
 
   const actions = { lockPostAutosaving: (key) => { f.autosaveLocks.add(key); f.autosaveLocked = true; },
     unlockPostAutosaving: (key) => { f.autosaveLocks.delete(key); f.autosaveLocked = f.autosaveLocks.size > 0; },
@@ -308,10 +310,11 @@ function fixture(post_type = 'page', url = 'https://example.test/wp-admin/post.p
 
           return definition.type === 'rich-text' ? !value?.length : value === undefined;
         }),
-      createBlock: (name, attributes = {}, innerBlocks = []) => ({ name,
+      createBlock: (name, attributes = {}, innerBlocks = [], innerContent) => ({ name,
         // Gutenberg wraps top-level rich text and decodes &nbsp;; query values stay strings.
         attributes: Object.fromEntries(Object.entries(attributes).map(([key, value]) => [key,
-          registrations[name]?.attributes?.[key]?.type === 'rich-text' ? String(value).replaceAll('&nbsp;', '\u00a0') : value])), innerBlocks, clientId: `new-${nextId++}`, isValid: true }),
+          registrations[name]?.attributes?.[key]?.type === 'rich-text' ? String(value).replaceAll('&nbsp;', '\u00a0') : value])), innerBlocks, ...(innerContent && { innerContent }), clientId: `new-${nextId++}`, isValid: true }),
+      getBlockContent: (block) => block.innerContent.join('').trim(),
       createBlocksFromInnerBlocksTemplate: (items) => items.map(([name, attributes, children = []]) => wp.blocks.createBlock(name, attributes, wp.blocks.createBlocksFromInnerBlocksTemplate(children))),
       // Gutenberg keeps blocks that match the template by position and name.
       synchronizeBlocksWithTemplate: (blocks, items) => !items ? blocks : items.map(([name, attributes, children], index) => blocks[index]?.name === name
@@ -714,6 +717,46 @@ function storedMarkup(f, raw) {
   const wp = f.window.wp;
   f.post.content.raw = raw;
   wp.data.select('core/editor').getEditedPostContent = () => f.dirty ? wp.blocks.serialize(f.blocks) : f.post.content.raw;
+}
+
+// A one-block WordPress document with the raw and registered parser views.
+// Other fixture documents keep their ordinary JSON serialization.
+function customHTMLMarkupFixture(f, modern = false) {
+  const wp = f.window.wp;
+  const first = wp.blocks.parse;
+  const serialize = wp.blocks.serialize;
+  const body = (markup) => /^<!-- wp:html -->([\s\S]*)<!-- \/wp:html -->$/.exec(markup)?.[1];
+  f.unfilteredHTML = true;
+
+  if (modern) f.registrations['core/html'].attributes.content = { type: 'string', role: 'local' };
+
+  wp.blockSerializationDefaultParser = {
+    parse(markup) {
+      const innerHTML = body(markup);
+
+      return innerHTML === undefined ? [] : [{ blockName: 'core/html', innerHTML, innerBlocks: [] }];
+    },
+  };
+  wp.blocks.parse = (markup) => {
+    const html = body(markup);
+
+    if (html === undefined) return first(markup);
+
+    return [modern
+      ? wp.blocks.createBlock('core/html', {}, [], [html])
+      : wp.blocks.createBlock('core/html', { content: html.trim() })];
+  };
+
+  wp.blocks.serialize = (blocks) => {
+    if (blocks.length !== 1 || blocks[0].name !== 'core/html') return serialize(blocks);
+
+    const [block] = blocks;
+    const html = modern ? wp.blocks.getBlockContent(block) : block.attributes.content;
+
+    return '<!-- wp:html -->\n' + html + '\n<!-- /wp:html -->';
+  };
+
+  return f;
 }
 
 // A canvas document's root element; zoomedOut marks Gutenberg's zoom-out mode.
@@ -1150,4 +1193,4 @@ function ordinaryBlockActions(f) {
   return actions;
 }
 
-export { source, target, changes, copy, outsideDebug, stylingFixture, styleEdit, fixture, defaultRoundTripFixture, mixedFixture, linkFixture, patternSectionFixture, queryFixture, filledFixture, sharedFixture, referenceFixture, storedMarkup, canvasRoot, stalledCanvas, canvasBlock, sizedEditor, explicitFootnoteFixture, completeTabsFixture, structuralFootnoteFixture, emptyCommentsFixture, completeGalleryFixture, completeContextFixture, completeTabsAddFixture, ordinaryMetaFixture, ordinaryBlockActions };
+export { source, target, changes, copy, outsideDebug, stylingFixture, styleEdit, fixture, defaultRoundTripFixture, mixedFixture, linkFixture, patternSectionFixture, queryFixture, filledFixture, sharedFixture, referenceFixture, storedMarkup, customHTMLMarkupFixture, canvasRoot, stalledCanvas, canvasBlock, sizedEditor, explicitFootnoteFixture, completeTabsFixture, structuralFootnoteFixture, emptyCommentsFixture, completeGalleryFixture, completeContextFixture, completeTabsAddFixture, ordinaryMetaFixture, ordinaryBlockActions };

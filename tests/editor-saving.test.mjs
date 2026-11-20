@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { target, changes, copy, outsideDebug, fixture, sharedFixture, explicitFootnoteFixture, ordinaryMetaFixture, ordinaryBlockActions } from './helpers/editor-fixture.mjs';
+import { target, changes, copy, outsideDebug, fixture, sharedFixture, explicitFootnoteFixture, ordinaryMetaFixture, ordinaryBlockActions, storedMarkup, customHTMLMarkupFixture } from './helpers/editor-fixture.mjs';
 
 test('document settings and content share one verified native save', async () => {
   const f = fixture('book');
@@ -139,6 +139,53 @@ test('a meta box can write a key this save left alone, never one it requested', 
     assert.equal(result.meta_boxes ?? result.diagnostics?.meta_boxes, 'saved', JSON.stringify(result));
     assert.equal(result.persistence, requested ? 'applied_with_differences' : 'verified', JSON.stringify(result));
   }
+});
+
+test('legacy Custom HTML whitespace changes fail save verification even alongside a meta box write', async () => {
+  for (const metaBoxes of [false, true]) {
+    const f = customHTMLMarkupFixture(fixture());
+    const raw = '<!-- wp:html -->\n<b>x</b>\n<!-- /wp:html -->';
+    f.blocks = f.window.wp.blocks.parse(raw);
+    storedMarkup(f, raw);
+
+    if (metaBoxes) {
+      f.window._wpMetaBoxUrl = '/wp-admin/post.php';
+      f.metaBoxBody = 'value=form';
+      f.window.fetch = () => Promise.resolve(new Response(null, { status: 200 }));
+      f.post.meta = { note: 'stored' };
+    }
+
+    await f.call('connect', { settings: true });
+    const edit = await f.call('edit', { post: { title: 'Changed' } });
+    assert.equal(edit.ok, true, JSON.stringify(edit));
+    f.duringSave = () => {
+      f.post.content.raw = raw.replace('<b>x</b>', '\n<b>x</b>\n');
+
+      if (metaBoxes) f.post.meta = { note: 'from form' };
+    };
+
+    const result = await f.save();
+    assert.equal(result.error, 'verification_mismatch', JSON.stringify(result));
+    assert.equal(result.persistence, 'uncertain');
+    assert.equal(result.diagnostics.custom_html_changed, true);
+  }
+});
+
+test('an attached save includes the user deletion of padded Custom HTML', async () => {
+  const f = customHTMLMarkupFixture(fixture(), true);
+  const raw = '<!-- wp:html -->\n\n<b>x</b>\n\n<!-- /wp:html -->';
+  const wp = f.window.wp;
+  f.blocks = wp.blocks.parse(raw);
+  storedMarkup(f, raw);
+  const connected = await f.call('connect', { workflow: 'attached' });
+  assert.equal(connected.ok, true, JSON.stringify(connected));
+  wp.data.dispatch('core/block-editor').removeBlocks([f.blocks[0].clientId]);
+
+  const result = await f.save({ save_all_pending: true });
+  assert.equal(result.persistence, 'verified', JSON.stringify(result));
+  assert.equal(result.saved_all_pending, true);
+  assert.equal(f.saves, 1);
+  assert.equal(f.post.content.raw, '');
 });
 
 test('a slug WordPress generates when a draft stops being a draft still verifies', async () => {

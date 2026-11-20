@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { target, changes, copy, fixture, mixedFixture, sharedFixture, referenceFixture, storedMarkup } from './helpers/editor-fixture.mjs';
+import { target, changes, copy, fixture, mixedFixture, sharedFixture, referenceFixture, storedMarkup, customHTMLMarkupFixture } from './helpers/editor-fixture.mjs';
 
 for (const [type, identity, scope] of [['wp_block', 7, 'all_references'], ['wp_navigation', 7, 'site_wide'],
   ['wp_template', 'theme//test', 'site_wide'], ['wp_template_part', 'theme//part', 'site_wide']]) {
@@ -483,6 +483,32 @@ test('detach uses live edited pattern blocks and does not mutate their attribute
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(f.blocks[1].attributes.content, 'Live pending content');
   assert.deepEqual(copy(source), before);
+});
+
+test('detach refuses Custom HTML padding even when the live record serializes the draft', async () => {
+  for (const padding of ['stored', 'stored and live', 'live']) {
+    const f = customHTMLMarkupFixture(detachable(), true);
+    const wp = f.window.wp;
+    const padded = '<!-- wp:html -->\n\n<b>x</b>\n\n<!-- /wp:html -->';
+    const stored = padding === 'live' ? wp.blocks.serialize(wp.blocks.parse(padded)) : padded;
+    f.referenceRecord.content.raw = stored;
+
+    if (padding !== 'stored') {
+      f.editedReference = {
+        blocks: wp.blocks.parse(padded),
+        content: (record) => wp.blocks.serialize(record.blocks),
+      };
+    }
+
+    const before = copy(f.blocks);
+    await f.call('connect');
+    const result = await f.edit([{ op: 'detach_reference', client_id: f.blocks[0].clientId }]);
+    assert.equal(result.diagnostics.constraint, 'custom_html_exact_content', JSON.stringify(result));
+    assert.equal(result.editor_result, 'not_applied');
+    assert.deepEqual(f.blocks, before);
+    assert.equal(f.referenceRecord.content.raw, stored);
+    assert.equal(f.dirty, false);
+  }
 });
 
 test('detach refuses non-pattern references, invalid pattern content and native removal locks', async () => {

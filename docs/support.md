@@ -8,6 +8,7 @@ Results from older desktop runs are historical and do not establish current beha
 | --- | --- | --- |
 | Pages, posts, and custom post types | Supported | Create and edit block content and post settings using WordPress registrations. |
 | Text, layout, styles, and responsive settings | Supported | The real-editor suite covers common edits and style families. |
+| Custom HTML | Supported | Insert, replace, move, and remove raw HTML embeds and save documents containing them when WordPress grants unfiltered HTML permission. [Edit reference](../skills/blockwork/references/edit.md#limits-and-native-behavior) |
 | Media, categories, and tags | Supported | Upload and attach media and manage terms; some Gallery bindings remain limited. [Finding](editing-results.md#visible-limits) |
 | Synced patterns | Supported | Shared editing, overrides, creation from copied sections, and detaching one reference use native registrations. Creation and page replacement are separate verified saves. Detach preserves instance overrides and leaves the shared source unchanged. |
 | Templates and template parts | Experimental | An older desktop run saved both but failed to release their locks. [Result](history/integration-results.md#deferred-plugin-issues) |

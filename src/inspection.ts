@@ -3,7 +3,7 @@ import { styleRules, style_guide } from './styling';
 import type { StyleCatalog } from './styling';
 import { JsonObjectSchema, JsonSchema } from './contracts';
 import type { BlockSummary, JsonObject, JsonValue, ReadOptions } from './contracts';
-import type { Attribute, Block, WordPress } from './wordpress';
+import type { Attribute, Block, ParsedPatternBlock, WordPress } from './wordpress';
 import { guidelines, patterns, styles, variations } from './catalog';
 import { documentRoot } from './document-view';
 import { escapeBareAmpersands, escapeBareLessThan, same, stored } from './values';
@@ -133,10 +133,85 @@ export function boundAttributes(block: Pick<Block, 'attributes'>): string[] {
   return v.is(JsonObjectSchema, bindings) ? Object.keys(bindings) : [];
 }
 
-// Custom HTML and Classic content are preserved but never written. Gutenberg
-// keeps Custom HTML in the block's inner content, which block inputs can't carry.
-export function rawContent(name: string): boolean {
-  return ['core/freeform', 'core/html'].includes(name);
+export function rawContentConstraint(wp: WordPress, name: string): string | undefined {
+  if (name === 'core/freeform') {
+    return 'raw_content';
+  }
+
+  if (
+    name === 'core/html' &&
+    wp.data.select('core/editor')?.canUserUseUnfilteredHTML?.() !== true
+  ) {
+    return 'unfiltered_html_required';
+  }
+}
+
+export function customHTMLContent(wp: WordPress, block: Block): string {
+  if (block.innerContent) {
+    requireCondition(wp.blocks.getBlockContent, 'native_readiness_unavailable');
+
+    return wp.blocks.getBlockContent(block);
+  }
+
+  // WordPress 7.0 stores Custom HTML in a raw-source attribute.
+  return typeof block.attributes.content === 'string' ? block.attributes.content : '';
+}
+
+export function customHTMLBytes(wp: WordPress, markup: string): string | string[] | undefined {
+  if (!/<!--\s+wp:(?:core\/)?html\s/.test(markup)) {
+    return;
+  }
+
+  const parser = wp.blockSerializationDefaultParser;
+
+  if (!parser) {
+    return markup;
+  }
+
+  const bodies: string[] = [];
+  const collect = (blocks: ParsedPatternBlock[]): boolean => {
+    for (const block of blocks) {
+      if (block.blockName === 'core/html') {
+        if (block.innerBlocks.length) {
+          return false;
+        }
+
+        bodies.push(block.innerHTML);
+      } else if (!collect(block.innerBlocks)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  // The raw parser omits child block delimiters from innerHTML. Only an
+  // exact document match proves those bytes when a Custom HTML block has children.
+  return collect(parser.parse(markup)) ? bodies : markup;
+}
+
+export function sameCustomHTML(wp: WordPress, before: string, after: string): boolean {
+  const body = (markup: string) => {
+    const bytes = customHTMLBytes(wp, markup);
+
+    // When comparing source and native markup, allow Gutenberg to add a single
+    // framing line break at each delimiter.
+    return Array.isArray(bytes) ? bytes.map(customHTMLBody) : bytes;
+  };
+
+  return before === after || same(body(before), body(after));
+}
+
+export function customHTMLBody(markup: string): string {
+  return markup.replace(/^\r?\n|\r?\n$/g, '');
+}
+
+export function requireExactCustomHTML(wp: WordPress, before: string, after: string): void {
+  requireCondition(sameCustomHTML(wp, before, after), 'unsupported_markup', {
+    block_name: 'core/html',
+    attribute: 'content',
+    constraint: 'custom_html_exact_content',
+  });
 }
 
 export function sharedReference(block: Block): boolean {
@@ -276,22 +351,27 @@ export function readTree(
   list: Block[],
   parent: number[] = [],
   output: BlockSummary[] = [],
+  insideRawHTML = false,
 ): BlockSummary[] {
   requireCondition(parent.length < 16, 'tree_too_deep');
 
   for (const [index, block] of list.entries()) {
     requireCondition(output.length < 2000, 'too_many_blocks');
     const registration = wp.blocks.getBlockType(block.name);
+    const nestedHTML = block.name === 'core/html' && Boolean(block.innerBlocks?.length);
     let reason = '';
     let support: BlockSummary['support'] = 'supported';
 
-    if (!registration || block.name === 'core/missing') {
+    if (insideRawHTML || nestedHTML) {
+      reason = 'raw_content';
+      support = 'unsupported';
+    } else if (!registration || block.name === 'core/missing') {
       reason = 'missing_registration';
       support = 'unsupported';
     } else if (block.isValid === false) {
       reason = 'invalid_block';
       support = 'invalid';
-    } else if (rawContent(block.name)) {
+    } else if (rawContentConstraint(wp, block.name)) {
       reason = 'raw_content';
       support = 'unsupported';
     }
@@ -302,6 +382,10 @@ export function readTree(
         nativeAttribute(value, registration?.attributes?.[name]),
       ]),
     );
+
+    if (block.name === 'core/html') {
+      attributes.content = customHTMLContent(wp, block);
+    }
 
     requireCondition(v.is(JsonObjectSchema, attributes), 'unsupported_block');
     output.push({
@@ -317,7 +401,13 @@ export function readTree(
     // Shared entity children belong to another document and must never become
     // paths in this one. Referenced content is edited by its own exact target.
     if (!sharedReference(block)) {
-      readTree(wp, block.innerBlocks || [], [...parent, index], output);
+      readTree(
+        wp,
+        block.innerBlocks || [],
+        [...parent, index],
+        output,
+        insideRawHTML || nestedHTML,
+      );
     }
   }
 
@@ -370,6 +460,11 @@ function storedRows(wp: WordPress, rows: BlockSummary[]): BlockSummary[] {
 
 function storedMarkup(row: BlockSummary): JsonValue {
   const markup = row.block.originalContent ?? '';
+
+  if (row.name === 'core/html' && row.block.innerContent) {
+    // Parsed innerContent includes the raw bytes that native getBlockContent trims.
+    return row.block.innerContent;
+  }
 
   if (row.support !== 'supported') {
     return markup || null;
@@ -909,6 +1004,7 @@ export async function projectInspection(
       const sharedEntityAttribute =
         ['core/block', 'core/navigation', 'core/template-part'].includes(name) &&
         ['ref', 'slug', 'theme', 'area'].includes(key);
+      const customHTML = name === 'core/html' && key === 'content';
 
       const item: JsonObject = {
         name: key,
@@ -916,6 +1012,7 @@ export async function projectInspection(
           supportedTypes &&
           !protectedAttribute &&
           !sharedEntityAttribute &&
+          !customHTML &&
           attribute.source !== 'meta' &&
           !(row && boundAttributes(row).includes(key)),
       };
@@ -927,6 +1024,11 @@ export async function projectInspection(
 
         item.use_instead =
           'Read settings: true for the writable REST meta contract, then edit settings.meta with only supplied keys. A registration meta key alone does not establish REST writability.';
+      }
+
+      if (customHTML) {
+        item.use_instead =
+          'Use insert or replace with the full HTML in attributes.content or serialized markup. WordPress must allow this user to post unfiltered HTML.';
       }
 
       for (const field of [
@@ -980,6 +1082,12 @@ export async function projectInspection(
         parent_client_id: parentId,
         reason: 'shared_descendant_not_editable',
       };
+    } else if (parent?.name === 'core/html' || parent?.reason === 'raw_content') {
+      result.insertion = {
+        available: false,
+        parent_client_id: parentId,
+        reason: parent.reason || 'custom_html_leaf',
+      };
     } else if (!store.getInserterItems || !store.canInsertBlockType || !store.getTemplateLock) {
       result.insertion = { available: false, reason: 'native_insertion_policy_unavailable' };
     } else if (parent_id && !store.getBlockListSettings?.(parent_id)) {
@@ -1001,7 +1109,11 @@ export async function projectInspection(
           .map((item) => ({
             name: item.name,
             title: item.title?.slice(0, 200) ?? item.name,
-            allowed: !lock && !item.isDisabled && store.canInsertBlockType!(item.name, parent_id),
+            allowed:
+              !lock &&
+              !item.isDisabled &&
+              !rawContentConstraint(wp, item.name) &&
+              store.canInsertBlockType!(item.name, parent_id),
           })),
         truncated: items.length > 200,
       };

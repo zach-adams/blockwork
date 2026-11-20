@@ -140,8 +140,9 @@ Shortcode block, which still needs the theme or plugin that registers it. The
 root blocks become consecutive inserts, like `markup`, and each counts as one
 edit. An element with no block conversion, such as a form, refuses the edit with
 `html_not_convertible`, and `diagnostics.unconverted` names its tag. Rewrite or
-remove that element, or build it as a `block` tree. Send serialized block
-content as `markup`.
+remove that element, or build it as a `block` tree. To keep a raw embed, use the
+Custom HTML block with the WordPress permission described below. Send serialized
+block content as `markup`.
 
 ```js
 await blockwork.edit({ edits: [
@@ -555,10 +556,23 @@ exact rules.
   `contentOnly` always applies.
 - A blank page's single unmodified default paragraph can be updated, replaced,
   or removed through its client ID.
-- Shared references are leaves; their content is a separate document target.
-  Custom HTML and Classic blocks, and lock changes, are out of scope. Inserting
-  one refuses with `diagnostics.block_name` and `reason: "raw_content"`. Classic
-  HTML can still be inserted as blocks through `html`.
+- Shared references are leaves. Their content is a separate document target.
+  Lock changes and Classic blocks remain outside the edit API. Use `html` to
+  convert classic content into blocks.
+- If WordPress allows the editor user to post unfiltered HTML, insert or replace
+  a Custom HTML block with `block: { name: "core/html", attributes: { content: "<iframe …></iframe>" } }`
+  or `markup: "<!-- wp:html -->\n…\n<!-- /wp:html -->"`. Use a standalone HTML
+  fragment with no nested Gutenberg blocks or extra whitespace at its edges.
+  A detailed read returns the HTML in `attributes.content`. Use `replace` to
+  change it. Custom HTML can be moved or removed, and the document can be saved
+  with post field and settings changes. If WordPress denies the permission,
+  insertion refuses with `diagnostics.constraint: "unfiltered_html_required"`,
+  and existing Custom HTML remains unsupported with `reason: "raw_content"`.
+  Existing Custom HTML with nested Gutenberg blocks also marks the entire
+  subtree as unsupported. Use `block` or `markup` for standalone embeds.
+  `insert_variation` refuses Custom HTML with `custom_html_variation`.
+  Copying or normalizing markup refuses with `custom_html_exact_content`
+  when Gutenberg would change the raw HTML.
 - Inserting a Query first reads its editor preview (12-second budget). For an
   inherited Query, Gutenberg ignores taxonomy filters and adjusts the preview
   for supported template slugs. In the post editor without a template context,

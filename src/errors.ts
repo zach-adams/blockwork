@@ -274,7 +274,27 @@ export function invalidRequest(code: string, issues: Array<v.BaseIssue<unknown>>
 const constraintHints = new Map([
   [
     'raw_content',
-    'Blockwork never inserts or edits Custom HTML or Classic blocks. Build the content from blocks, or send classic HTML through html, which converts it as Convert to blocks does. If the user needs an embed kept as raw HTML, report that it needs the editor. Leave existing raw blocks as they are.',
+    'Classic blocks stay as they are. Build the content from blocks, or send classic HTML through html to convert it to blocks.',
+  ],
+  [
+    'unfiltered_html_required',
+    'WordPress filters Custom HTML for this editor user. Use ordinary blocks or ask the user to handle the embed with an account WordPress permits to post unfiltered HTML.',
+  ],
+  [
+    'custom_html_requires_replace',
+    'To change the HTML, replace this Custom HTML block with a core/html block carrying the full new string in attributes.content, or send its serialized markup.',
+  ],
+  [
+    'custom_html_leaf',
+    'Put the raw HTML in attributes.content and send any nested Gutenberg blocks as siblings or separate edits.',
+  ],
+  [
+    'custom_html_variation',
+    'Use an ordinary insert with the exact HTML in a core/html block or serialized markup. Read the variation in the editor if its HTML is unavailable.',
+  ],
+  [
+    'custom_html_exact_content',
+    'Gutenberg would change the Custom HTML body. To insert or replace HTML use a standalone fragment with no leading or trailing padding. For existing content, preserve the stored block and ask the user to review it in the editor.',
   ],
   [
     'bound_attribute_read_only',
@@ -359,7 +379,12 @@ export function errorHint(code: string, operation: string, diagnostics?: JsonObj
     return 'Read the source paragraph markup and settings, then read all destination blocks and settings. Supply the complete final settings.meta.footnotes JSON list in reference order with the copied markup, retaining destination bodies. Insert a root Footnotes block in the same request if needed. Markup alone cannot supply a missing body. If the source body is unavailable, preserve the draft and report that limit.';
   }
 
-  const constraint = ['unsupported_attribute', 'unsupported_block'].includes(code)
+  const constraint = [
+    'unsupported_attribute',
+    'unsupported_block',
+    'unsupported_markup',
+    'invalid_nesting',
+  ].includes(code)
     ? constraintHints.get(String(diagnostics?.constraint))
     : undefined;
   let repair = constraint ?? repairHint(code, operation);
@@ -536,7 +561,7 @@ function repairHint(code: string, operation: string): string {
     case 'html_conversion_failed':
       return "Gutenberg's HTML conversion threw in this editor, often inside a theme or plugin block's conversion rule. Nothing changed. Split the HTML at diagnostics.field into smaller inserts to find the fragment that fails, then rewrite it or build it as a block tree. Do not resend the same HTML unchanged.";
     case 'html_not_convertible':
-      return "Gutenberg's HTML conversion produced no blocks, or left the fragments in diagnostics.unconverted as raw HTML, which Blockwork never inserts. Each entry gives that block's path among the converted blocks and its element tag. Remove or rewrite that element as ordinary text, headings, lists, links, or images, or build it as a block tree in its own insert. Do not send it as markup for a Custom HTML or Classic block.";
+      return "Gutenberg's HTML conversion produced no blocks or left raw HTML. Each entry in diagnostics.unconverted gives the converted block's path and element tag. Rewrite the element as ordinary blocks, or send an embed the user wants kept as raw HTML in a Custom HTML block if WordPress permits unfiltered HTML.";
     case 'unsupported_block':
     case 'unsupported_markup':
     case 'unsupported_pattern':
@@ -566,7 +591,7 @@ function repairHint(code: string, operation: string): string {
     case 'unsupported_pending_settings':
       return 'The requested field, metadata, or pending settings are absent or not supported for a native write in this document. Inspect its writable settings schema and pending work. Retain unavailable or private fields; do not erase pending edits or invent a schema.';
     case 'unsupported_settings_document':
-      return 'Saving post fields or settings saves the whole document, and diagnostics.unsupported and invalid list blocks Blockwork cannot save faithfully, such as Custom HTML or Classic blocks. Nothing changed. Leave those blocks as they are and report that this change needs the user in the editor.';
+      return 'Saving post fields or settings saves the whole document. diagnostics.unsupported and invalid list blocks Blockwork cannot save faithfully, such as Classic blocks or Custom HTML without WordPress unfiltered HTML permission. Nothing changed. Leave those blocks as they are and report that this change needs the user in the editor.';
     case 'shared_content_only':
       return 'Shared documents accept content edits only, except wp_block accepts post.title. Only its auto-draft also accepts post.status publish. Omit other post fields, settings, and binding_writes. Read references/shared-and-abilities.md before planning another edit.';
     case 'unsupported_post_type':

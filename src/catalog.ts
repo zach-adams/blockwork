@@ -3,7 +3,14 @@ import * as v from 'valibot';
 import { ApiErrorSchema } from './contracts';
 import type { BlockInput, JsonObject } from './contracts';
 import type { Block, WordPress } from './wordpress';
-import { blockState, readTree, requireCondition, sharedReference, validity } from './inspection';
+import {
+  blockState,
+  readTree,
+  requireCondition,
+  sameCustomHTML,
+  sharedReference,
+  validity,
+} from './inspection';
 import { same } from './values';
 import { api, budgetedMs, timedRequest } from './native';
 import { provePreservation } from './preservation';
@@ -192,7 +199,8 @@ function equivalentContent(
 
   if (
     parsedRows.some((row) => row.support !== 'supported' && row.reason !== 'raw_content') ||
-    !same(blockState(liveRows), blockState(parsedRows))
+    !same(blockState(liveRows), blockState(parsedRows)) ||
+    !sameCustomHTML(wp, content, wp.blocks.serialize(live))
   ) {
     return false;
   }

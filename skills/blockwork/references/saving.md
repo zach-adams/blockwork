@@ -91,6 +91,12 @@ saved-record, and schema reads. Read, currentness, reference, and duplicate
 checks retain error precedence over the lock result. Every check must pass
 before Gutenberg saves.
 
+An attached save with `save_all_pending: true` uses the draft Gutenberg would
+save, including native deletions and serialization of Custom HTML. Save
+verification compares the stored Custom HTML body with the prepared body before
+accepting normalized block equivalence. If the body bytes differ,
+`diagnostics.custom_html_changed` is true on the `verification_mismatch` result.
+
 `save` rereads the saved record before `savePost`, so another writer's save
 between preparation and saving refuses with `saved_record_changed`.
 `diagnostics.fields` lists the changed field names without values. This editor's

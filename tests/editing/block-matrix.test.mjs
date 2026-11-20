@@ -3,7 +3,7 @@ import { editingTests } from './cases.mjs';
 
 const { after, before, generated, test, run } = editingTests(import.meta.url);
 
-import { doc, paragraph } from './blocks.mjs';
+import { block, doc, paragraph } from './blocks.mjs';
 import {
   assertRefused,
   assertSavedCleanly,
@@ -74,7 +74,7 @@ after(async () => {
 // Every registered core block must be assigned a treatment. Parent names form a
 // chain from the block to the document root.
 const roots =
-  `paragraph image heading gallery list quote accordion archives audio buttons calendar categories code columns cover details embed file group math latest-comments latest-posts media-text more page-list playlist preformatted pullquote rss search separator social-links spacer table tabs tag-cloud verse video footnotes site-logo site-title site-tagline query avatar post-title post-excerpt post-featured-image post-author post-author-name post-comments-count post-comments-link post-date post-terms post-navigation-link post-time-to-read read-more comments post-comments-form icon loginout term-count term-description term-name terms-query query-title post-author-biography breadcrumbs`.split(
+  `paragraph image heading gallery html list quote accordion archives audio buttons calendar categories code columns cover details embed file group math latest-comments latest-posts media-text more page-list playlist preformatted pullquote rss search separator social-links spacer table tabs tag-cloud verse video footnotes site-logo site-title site-tagline query avatar post-title post-excerpt post-featured-image post-author post-author-name post-comments-count post-comments-link post-date post-terms post-navigation-link post-time-to-read read-more comments post-comments-form icon loginout term-count term-description term-name terms-query query-title post-author-biography breadcrumbs`.split(
     ' ',
   );
 const parents = {
@@ -120,7 +120,7 @@ const parents = {
 };
 // These blocks are shared entities, raw content, or require a template or a
 // WordPress-managed block rather than an ordinary page insertion.
-const restricted = `html missing block navigation template-part freeform`.split(' ');
+const restricted = ['missing', 'block', 'navigation', 'template-part', 'freeform'];
 const entries = Object.fromEntries([
   ...roots.map((name) => [`core/${name}`, { parents: [] }]),
   ...Object.entries(parents).map(([name, chain]) => [`core/${name}`, { parents: chain }]),
@@ -131,7 +131,7 @@ const entries = Object.fromEntries([
       restricted: true,
       reason: ['block', 'navigation', 'template-part'].includes(name)
         ? 'Shared entities require reference operations.'
-        : 'Raw HTML, classic content, and missing blocks are outside the supported edit API.',
+        : 'Classic content and missing blocks are outside the supported edit API.',
     },
   ]),
 ]);
@@ -364,6 +364,10 @@ async function nativeFixture(name, tab) {
     `(() => {
       const create = input => {
         const attributes = { ...input.attributes };
+        if (input.name === 'core/html') {
+          const { content, ...rest } = attributes;
+          return wp.blocks.createBlock(input.name, rest, [], [content]);
+        }
         if (input.name === 'core/query' && attributes.queryId === undefined) attributes.queryId = ${10000 + registered.indexOf(name)};
         return wp.blocks.createBlock(input.name, attributes, (input.inner_blocks || []).map(create));
       };
@@ -389,6 +393,7 @@ async function nativeFixture(name, tab) {
       const input = block => {
         const schema = wp.blocks.getBlockType(block.name).attributes;
         const attributes = Object.fromEntries(Object.entries(block.attributes).filter(([key]) => schema[key]?.role !== 'local' && schema[key]?.__experimentalRole !== 'local'));
+        if (block.name === 'core/html') attributes.content = wp.blocks.getBlockContent(block);
         return { name: block.name, attributes, inner_blocks: block.innerBlocks.map(input) };
       };
       return JSON.parse(JSON.stringify(input(wp.data.select('core/block-editor').getBlocks()[0])));
@@ -941,7 +946,7 @@ generated('every native block preserves its bytes beside an edit', async (t) => 
     const entry = entries[name];
 
     if (
-      (entry.restricted && !['core/html', 'core/freeform'].includes(name)) ||
+      (entry.restricted && name !== 'core/freeform') ||
       entry.parents.includes('navigation')
     )
       continue;
@@ -992,6 +997,8 @@ generated('every native block preserves its bytes beside an edit', async (t) => 
 });
 
 function updateAttributes(name, guide) {
+  if (name === 'core/html') return { metadata: { name: 'Updated matrix setting' } };
+
   if (name === 'core/math') return mathUpdate;
 
   if (name === 'core/file') return { fileName: 'Updated file.wav' };
@@ -1243,6 +1250,7 @@ generated('WordPress 7.0.8 reduced matrix', async (t) => {
     'core/group',
     'core/cover',
     'core/separator',
+    'core/html',
   ].filter((name) => t.selected(name));
 
   if (!names.length) return;
@@ -1255,6 +1263,14 @@ generated('WordPress 7.0.8 reduced matrix', async (t) => {
 
       for (const name of names) {
         const leaf = await t.test(name, async () => {
+          if (name === 'core/html') {
+            const padded = block('html', undefined, '\n<b>Padded</b>\n');
+            const refused = await blockwork.edit({ edits: [{ op: 'insert', markup: padded }] });
+            await assertRefused(baseline, id, before, refused, { error: 'unsupported_markup' });
+            assert.equal(refused.diagnostics.constraint, 'custom_html_exact_content');
+            assert.equal(refused.editor_result, 'not_applied');
+          }
+
           assertSuccess(
             await blockwork.edit({
               edits: [{ op: 'insert', block: await build(name, entries[name], tab) }],
@@ -1266,7 +1282,12 @@ generated('WordPress 7.0.8 reduced matrix', async (t) => {
       }
 
       if (changed) {
-        await assertSavedCleanly(baseline, id, before, await blockwork.save());
+        const { after } = await assertSavedCleanly(baseline, id, before, await blockwork.save());
+
+        if (names.includes('core/html')) {
+          assert.ok(after.content.includes(block('html', undefined, attrs['core/html'].content)));
+        }
+
         const page = await frontEnd(baseline, id);
         assert.equal(page.status, 200);
         assert.doesNotMatch(
