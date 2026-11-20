@@ -269,6 +269,47 @@ export function invalidRequest(code: string, issues: Array<v.BaseIssue<unknown>>
   };
 }
 
+// Request repairs that depend on the failed constraint. A refusal of existing
+// content keeps its code's hint, which says to preserve that content.
+const constraintHints = new Map([
+  [
+    'raw_content',
+    'Blockwork never inserts or edits Custom HTML or Classic blocks. Build the content from blocks, or send classic HTML through html, which converts it as Convert to blocks does. If the user needs an embed kept as raw HTML, report that it needs the editor. Leave existing raw blocks as they are.',
+  ],
+  [
+    'bound_attribute_read_only',
+    "A binding supplies this attribute's value, so the block's own value is never shown. Write a core/post-meta binding in this document with binding_writes, or change the backing data. Edit the block's unbound attributes directly.",
+  ],
+  [
+    'registered_binding_source',
+    "diagnostics.source isn't a binding source registered in this editor. Use a registered source such as core/post-meta or core/post-data, with the args that source expects, or leave the attribute unbound.",
+  ],
+  [
+    'bindable_attribute',
+    "This site doesn't let this block bind that attribute. diagnostics.bindable_attributes lists the ones it does. Bind one of those, or leave the attribute unbound.",
+  ],
+  [
+    'pattern_override_operations',
+    'Pattern override bindings belong to synced patterns. Edit an instance through its synced pattern reference operations instead, and keep existing override bindings as they are.',
+  ],
+  [
+    'binding_args',
+    'This core source reads the argument in diagnostics.required_arg, such as {key: "job_title"} for core/post-meta or {field: "date"} for core/post-data. Add it to args.',
+  ],
+  [
+    'post_date_binding',
+    "Post Date accepts only its own date binding, which inserting a plain Post Date or its Modified Date variation adds. Remove the other binding, or bind a block that doesn't write into its binding as it loads.",
+  ],
+  [
+    'block_binding_permission',
+    "This user can't connect block attributes to data sources in this editor, which needs WordPress's edit_block_binding capability. Nothing changed. Leave the attribute unbound, or report that the binding needs a user who can.",
+  ],
+  [
+    'binding_entry',
+    'Each metadata.bindings entry maps an attribute name to {source, args}. source is a namespaced name such as core/post-meta, and args is an optional object the source defines. Correct that entry.',
+  ],
+]);
+
 // Hints are authored here, never copied from server messages or input values.
 export function errorHint(code: string, operation: string, diagnostics?: JsonObject): string {
   if (code === 'unsupported_structural_edit') {
@@ -318,9 +359,15 @@ export function errorHint(code: string, operation: string, diagnostics?: JsonObj
     return 'Read the source paragraph markup and settings, then read all destination blocks and settings. Supply the complete final settings.meta.footnotes JSON list in reference order with the copied markup, retaining destination bodies. Insert a root Footnotes block in the same request if needed. Markup alone cannot supply a missing body. If the source body is unavailable, preserve the draft and report that limit.';
   }
 
-  const repair = Array.isArray(diagnostics?.use_instead)
-    ? 'This block has no attribute by that name. Its block support stores the setting at the style path in diagnostics.use_instead; set it there with update or update_style.'
-    : repairHint(code, operation);
+  const constraint = ['unsupported_attribute', 'unsupported_block'].includes(code)
+    ? constraintHints.get(String(diagnostics?.constraint))
+    : undefined;
+  let repair = constraint ?? repairHint(code, operation);
+
+  if (Array.isArray(diagnostics?.use_instead)) {
+    repair =
+      'This block has no attribute by that name. Its block support stores the setting at the style path in diagnostics.use_instead; set it there with update or update_style.';
+  }
 
   if (diagnostics?.path_space !== 'planned') {
     return repair;
@@ -497,11 +544,12 @@ function repairHint(code: string, operation: string): string {
     case 'style_unavailable':
     case 'invalid_class_name':
       return 'The requested registered block style is unavailable, custom classes are disabled, or the existing className is not a string. Read the attribute_guide styles for this block and use a listed style; do not invent a class.';
+    case 'bound_block_unsupported':
+      return 'This block has a binding Blockwork does not edit, named by diagnostics.attribute and constraint. Nothing changed. Leave the block and its subtree as they are, and choose targets outside it.';
     case 'binding_attribute_unsupported':
     case 'binding_context_unavailable':
     case 'binding_write_refused':
     case 'bound_block_not_editable':
-    case 'bound_block_unsupported':
     case 'unsupported_binding_target':
     case 'conflicting_meta_write':
       return 'The requested binding lacks a supported writable attribute, backing field, or document context, or conflicts with a direct meta write. Inspect the exact binding and settings schema. Write only an inspected public core post-meta binding, once; preserve unsupported or private bindings.';
@@ -516,8 +564,9 @@ function repairHint(code: string, operation: string): string {
     case 'meta_unavailable':
     case 'private_meta_unsupported':
     case 'unsupported_pending_settings':
-    case 'unsupported_settings_document':
       return 'The requested field, metadata, or pending settings are absent or not supported for a native write in this document. Inspect its writable settings schema and pending work. Retain unavailable or private fields; do not erase pending edits or invent a schema.';
+    case 'unsupported_settings_document':
+      return 'Saving post fields or settings saves the whole document, and diagnostics.unsupported and invalid list blocks Blockwork cannot save faithfully, such as Custom HTML or Classic blocks. Nothing changed. Leave those blocks as they are and report that this change needs the user in the editor.';
     case 'shared_content_only':
       return 'Shared documents accept content edits only, except wp_block accepts post.title. Only its auto-draft also accepts post.status publish. Omit other post fields, settings, and binding_writes. Read references/shared-and-abilities.md before planning another edit.';
     case 'unsupported_post_type':

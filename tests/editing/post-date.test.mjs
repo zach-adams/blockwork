@@ -275,6 +275,18 @@ test('an existing bound Date supports unbound styling, moves and removal', async
   });
 });
 
+test('Post Date written as markup inside a Query inserts like the native block', async () => {
+  const markup =
+    `<!-- wp:query ${JSON.stringify(query().attributes)} -->\n` +
+    '<div class="wp-block-query"><!-- wp:post-template -->\n<!-- wp:post-date /-->\n\n' +
+    '<!-- wp:post-title /-->\n<!-- /wp:post-template --></div>\n<!-- /wp:query -->';
+  await withDocument(site, { content: paragraph('Anchor') }, async ({ blockwork, id, before }) => {
+    requireOk(await blockwork.edit({ edits: [{ op: 'insert', markup }] }));
+    const { after: stored } = await assertSavedCleanly(site, id, before, await blockwork.save());
+    assert.match(stored.content, /<!-- wp:post-date[ /]/);
+  });
+});
+
 test('dynamic Date creation through automatic Post Template population', { todo: 'finding: post-date-roundtrip' }, async () => {
   await withDocument(site, { content: paragraph('Anchor') }, async ({ blockwork, id, before }) => {
     const result = await blockwork.edit({ edits: [{ op: 'insert', block: query([]) }] });

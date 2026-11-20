@@ -18,10 +18,12 @@ import type {
 } from './contracts';
 import type { Attribute, Block, BlockActions, BlockEditor, WordPress } from './wordpress';
 import {
+  bindingIssue,
   blockState,
+  boundAttributes,
   collapseNewlines,
   postDateField,
-  unsupportedBinding,
+  rawContent,
   containsPath,
   containerRestriction,
   editRestriction,
@@ -270,21 +272,31 @@ export function attributes(
         ? ['__proto__', 'constructor', 'prototype']
         : ['__proto__', 'constructor', 'prototype', 'metadata', 'lock', 'templateLock'];
 
-    // Agents may label blocks for List View and keep the members Gutenberg
-    // writes on pattern insertion, so read markup round-trips. Bindings and
-    // other members keep their dedicated, permission-checked operations.
+    // Agents may label blocks for List View, bind attributes to registered
+    // sources, and keep the members Gutenberg writes on pattern insertion, so
+    // read markup round-trips. Other members keep their dedicated operations.
     if (key === 'metadata' && attribute && source === 'request') {
       const members: Array<[string, unknown]> = v.is(JsonObjectSchema, value)
         ? Object.entries(value)
         : [['', value]];
 
       for (const [member, memberValue] of members) {
+        if (member === 'bindings' && v.is(JsonSchema, memberValue)) {
+          const issue = bindingIssue(
+            wp,
+            { name, attributes: { metadata: { bindings: memberValue } } },
+            true,
+          );
+          assert(!issue, 'unsupported_attribute', issue);
+          continue;
+        }
+
         const schema = metadataMembers.get(member);
         assert(schema && v.is(schema, memberValue), 'unsupported_attribute', {
           block_name: name,
           attribute: member ? `metadata.${diagnosticKey(member)}` : key,
           constraint: 'allowed_metadata_members_only',
-          allowed_members: [...metadataMembers.keys()],
+          allowed_members: [...metadataMembers.keys(), 'bindings'],
         });
         // The front end only honors the Hide control where the block supports it.
         assert(
@@ -333,12 +345,50 @@ export function attributes(
   }
 }
 
+// Connecting attributes to data needs WordPress's edit_block_binding, as the
+// Attributes panel does. Registered patterns and variations may carry their own
+// bindings, and parsing gives a plain Post Date its publish date binding.
+function checkBindingPermission(wp: WordPress, edit: Edit): void {
+  const authored: Array<Pick<Block, 'name' | 'attributes'>> = [];
+  const collect = (input: BlockInput) => {
+    if (postDateField({ name: input.name, attributes: input.attributes ?? {} }) !== 'date') {
+      authored.push({ name: input.name, attributes: input.attributes ?? {} });
+    }
+
+    (input.inner_blocks ?? []).forEach(collect);
+  };
+
+  if (edit.op === 'insert' || edit.op === 'replace') {
+    collect(edit.block);
+  }
+
+  if (edit.op === 'update' || edit.op === 'insert_variation') {
+    authored.push({ name: edit.name, attributes: edit.attributes });
+  }
+
+  const bound = authored.find((block) => boundAttributes(block).length > 0);
+  assert(
+    !bound || wp.data.select('core/block-editor').getSettings?.().canUpdateBlockBindings === true,
+    'unsupported_attribute',
+    {
+      block_name: bound?.name ?? '',
+      attribute: 'metadata.bindings',
+      constraint: 'block_binding_permission',
+    },
+  );
+}
+
 function nesting(wp: WordPress, block: Block, ancestors: Block[]): void {
   const type = wp.blocks.getBlockType(block.name);
-  assert(
-    type && !['core/freeform', 'core/html', 'core/missing'].includes(block.name),
-    'unsupported_block',
-  );
+  assert(type && block.name !== 'core/missing', 'unsupported_block', {
+    block_name: diagnosticKey(block.name),
+    reason: 'missing_registration',
+  });
+  assert(!rawContent(block.name), 'unsupported_block', {
+    block_name: block.name,
+    reason: 'raw_content',
+    constraint: 'raw_content',
+  });
   const parent = ancestors.at(-1);
   assert(
     !type.ancestor || ancestors.some((item) => type.ancestor!.includes(item.name)),
@@ -535,7 +585,8 @@ function checkPolicy(
         ),
         'unsupported_target_or_subtree',
       );
-      assert(!unsupportedBinding(block), 'bound_block_unsupported');
+      const issue = bindingIssue(wp, block);
+      assert(!issue, 'bound_block_unsupported', issue);
       assert(row.support === 'supported', 'block_not_editable', {
         block_name: block.name,
         reason: row.reason,
@@ -557,7 +608,8 @@ function checkPolicy(
       container(edit.path.slice(0, -1), sameParent ? 'move' : 'remove');
 
       for (const child of readTree(wp, [block])) {
-        assert(!unsupportedBinding(child), 'bound_block_unsupported');
+        const issue = bindingIssue(wp, child);
+        assert(!issue, 'bound_block_unsupported', issue);
       }
 
       // Like native removal and moves, only the selected block's own lock and
@@ -680,6 +732,24 @@ function plain(value: JsonValue | undefined): value is JsonObject {
   return prototype === Object.prototype || prototype === null;
 }
 
+// Each supplied binding replaces its attribute's entry whole, as Gutenberg's
+// binding controls do, so a new source never inherits the old one's args.
+function mergedMetadata(base: JsonValue | undefined, patch: JsonValue): JsonValue {
+  const result = merged(base, patch);
+
+  if (
+    plain(result) &&
+    plain(base) &&
+    plain(patch) &&
+    plain(base.bindings) &&
+    plain(patch.bindings)
+  ) {
+    result.bindings = { ...base.bindings, ...patch.bindings };
+  }
+
+  return result;
+}
+
 function merged(base: JsonValue | undefined, patch: JsonValue): JsonValue {
   if (!plain(base) || !plain(patch)) {
     return patch;
@@ -764,18 +834,8 @@ function updateAttributes(
   patch: JsonObject,
   unset: string[][],
 ): JsonObject {
-  assert(
-    !postDateField(block) ||
-      (!Object.hasOwn(patch, 'datetime') && !unset.some(([key]) => key === 'datetime')),
-    'unsupported_attribute',
-    {
-      block_name: block.name,
-      attribute: 'datetime',
-      constraint: 'bound_datetime_read_only',
-      use_instead:
-        'Preserve the backing post date. Edit unbound style attributes or move or remove the block under native permissions.',
-    },
-  );
+  const issue = bindingIssue(wp, block);
+  assert(!issue, 'bound_block_unsupported', issue);
   const updates: JsonObject = {};
   const registered = wp.blocks.getBlockType(block.name)?.attributes ?? {};
 
@@ -824,7 +884,7 @@ function updateAttributes(
         constraint: 'pattern_name_unchanged',
       },
     );
-    updates.metadata = merged(block.attributes.metadata, patch.metadata);
+    updates.metadata = mergedMetadata(block.attributes.metadata, patch.metadata);
   }
 
   attributes(
@@ -838,13 +898,7 @@ function updateAttributes(
   return updates;
 }
 
-function create(
-  wp: WordPress,
-  input: BlockInput,
-  depth = 0,
-  count = { value: 0 },
-  native = false,
-): Block {
+function create(wp: WordPress, input: BlockInput, depth = 0, count = { value: 0 }): Block {
   assert(depth < 15 && ++count.value <= 200, 'tree_too_large');
   assert(
     !['core/block', 'core/navigation', 'core/template-part'].includes(input.name),
@@ -863,24 +917,15 @@ function create(
       return [[key, key === 'style' ? compact(value) : richTextInput(value, registered[key])]];
     }),
   );
-  const metadata = values.metadata;
-  const binding = native && postDateField({ name: input.name, attributes: values });
-  const validated = { ...values };
-
-  if (binding && v.is(JsonObjectSchema, metadata)) {
-    const { bindings: _bindings, ...members } = metadata;
-    validated.metadata = members;
-  }
-
-  attributes(wp, input.name, validated);
+  attributes(wp, input.name, values);
 
   const block = wp.blocks.createBlock(
     input.name,
     values,
-    (input.inner_blocks ?? []).map((child) => create(wp, child, depth + 1, count, native)),
+    (input.inner_blocks ?? []).map((child) => create(wp, child, depth + 1, count)),
   );
-
-  assert(!unsupportedBinding(block), 'bound_block_unsupported');
+  const issue = bindingIssue(wp, block);
+  assert(!issue, 'bound_block_unsupported', issue);
 
   if (block.name !== 'core/post-date') {
     return block;
@@ -938,7 +983,7 @@ export function parsedBlockInput(wp: WordPress, block: Block): BlockInput {
     }),
   );
   input.inner_blocks = (block.innerBlocks ?? []).map((child) => parsedBlockInput(wp, child));
-  const recreated = create(wp, input, 0, { value: 0 }, true);
+  const recreated = create(wp, input);
 
   if (Object.keys(input.attributes).length !== Object.keys(originalAttributes).length) {
     const originalRows = readTree(wp, [block]);
@@ -1946,7 +1991,7 @@ async function preparePatternInsertion(
       parents,
       wp.blockSerializationDefaultParser?.parse(item.content) ?? [],
     );
-    inserted = inputs.map((input) => create(wp, input, 0, { value: 0 }, true));
+    inserted = inputs.map((input) => create(wp, input));
 
     for (const conversion of converted) {
       const dependencies = [...parents, ...ancestry(inserted, conversion.path.slice(0, -1))];
@@ -1982,50 +2027,38 @@ async function prepareVariationInsertion(
 
   assert(item, 'stale_variation');
   attributes(wp, edit.name, edit.attributes);
-  create(
-    wp,
-    {
-      name: edit.name,
-      attributes: item.attributes,
-      inner_blocks: wp.blocks
-        .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
-        .map((block) => blockInput(wp, block)),
-    },
-    0,
-    { value: 0 },
-    true,
-  );
+  create(wp, {
+    name: edit.name,
+    attributes: item.attributes,
+    inner_blocks: wp.blocks
+      .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
+      .map((block) => blockInput(wp, block)),
+  });
+  // A variation's bindings define it, so requested values and bindings may
+  // add to them but never replace them.
   const values = { ...item.attributes, ...edit.attributes };
+  const rebound = boundAttributes({ attributes: edit.attributes });
+  const bound = boundAttributes({ attributes: item.attributes ?? {} }).find(
+    (key) => Object.hasOwn(edit.attributes, key) || rebound.includes(key),
+  );
+  assert(!bound, 'unsupported_attribute', {
+    block_name: edit.name,
+    attribute: diagnosticKey(bound ?? ''),
+    constraint: 'bound_attribute_read_only',
+  });
 
-  if (postDateField({ name: edit.name, attributes: item.attributes ?? {} })) {
-    assert(!Object.hasOwn(edit.attributes, 'datetime'), 'unsupported_attribute', {
-      block_name: edit.name,
-      attribute: 'datetime',
-      constraint: 'bound_datetime_read_only',
-    });
-
-    if (
-      v.is(JsonObjectSchema, item.attributes?.metadata) &&
-      v.is(JsonObjectSchema, edit.attributes.metadata)
-    ) {
-      values.metadata = { ...item.attributes.metadata, ...edit.attributes.metadata };
-    }
+  if (item.attributes?.metadata !== undefined && edit.attributes.metadata !== undefined) {
+    values.metadata = mergedMetadata(item.attributes.metadata, edit.attributes.metadata);
   }
 
   const inserted = [
-    create(
-      wp,
-      {
-        name: edit.name,
-        attributes: values,
-        inner_blocks: wp.blocks
-          .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
-          .map((block) => blockInput(wp, block)),
-      },
-      0,
-      { value: 0 },
-      true,
-    ),
+    create(wp, {
+      name: edit.name,
+      attributes: values,
+      inner_blocks: wp.blocks
+        .createBlocksFromInnerBlocksTemplate(item.innerBlocks ?? [])
+        .map((block) => blockInput(wp, block)),
+    }),
   ];
 
   return inserted;
@@ -2368,11 +2401,12 @@ export async function preparePlan(
 
   const originalState = canonical(blockState(originalRows));
   const status = validity(originalRows);
-  assert(status.invalid.length === 0, 'unsupported_block');
+  assert(status.invalid.length === 0, 'unsupported_block', { invalid: status.invalid.slice(0, 5) });
   assert(
     !status.unsupported.length ||
       requests.every((edit) => ['update', 'update_style'].includes(edit.op)),
     'unsupported_structural_edit',
+    { unsupported: status.unsupported.slice(0, 5) },
   );
   checkInitialSerialization(wp, original, originalRows, content, target);
 
@@ -2522,7 +2556,17 @@ export async function preparePlan(
         });
       }
 
+      checkBindingPermission(wp, edit);
+
       if (update && existing) {
+        // A binding supplies a bound attribute's value, whichever operation
+        // would write it.
+        const bound = boundAttributes(existing).find((key) => Object.hasOwn(update, key));
+        assert(!bound, 'unsupported_attribute', {
+          block_name: existing.name,
+          attribute: diagnosticKey(bound ?? ''),
+          constraint: 'bound_attribute_read_only',
+        });
         changes.set(existing.clientId, update);
         existing.attributes = { ...existing.attributes, ...update };
       } else if ('parent' in edit) {

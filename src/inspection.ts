@@ -10,7 +10,8 @@ import { escapeBareAmpersands, escapeBareLessThan, same, stored } from './values
 import { BlockworkError, accessFailure, blockMismatches, diagnosticKey } from './errors';
 import { debugDetails } from './debug';
 
-// Only this exact native binding is supported for ordinary block operations.
+// Post Date's native binding to its post's publish or modified date, whose
+// value Blockwork waits for in Query previews.
 export function postDateField(
   block: Pick<Block, 'name' | 'attributes'>,
 ): 'date' | 'modified' | undefined {
@@ -34,10 +35,108 @@ export function postDateField(
   }
 }
 
-export function unsupportedBinding(block: Pick<Block, 'name' | 'attributes'>): boolean {
-  const metadata = block.attributes.metadata;
+const BindingSchema = v.strictObject({
+  source: v.pipe(v.string(), v.maxLength(200), v.regex(/^[a-z0-9-]+\/[a-z0-9-]+$/)),
+  args: v.optional(JsonObjectSchema),
+});
 
-  return v.is(JsonObjectSchema, metadata) && Boolean(metadata.bindings) && !postDateField(block);
+// The argument each core source reads. Post Data still renders an existing
+// binding's older key, but the editor reads only field.
+const requiredArgs = new Map([
+  ['core/post-meta', ['key']],
+  ['core/post-data', ['field']],
+  ['core/term-data', ['field']],
+]);
+
+// Gutenberg renders a binding through a source registered in this editor, for
+// attributes the site lets that block bind. Pattern overrides belong to synced
+// patterns, whose instance values have their own operations. Returns why a
+// block's bindings are unsupported, or undefined when they all are supported.
+export function bindingIssue(
+  wp: WordPress,
+  block: Pick<Block, 'name' | 'attributes'>,
+  authored = false,
+): JsonObject | undefined {
+  const metadata = block.attributes.metadata;
+  const bindings = v.is(JsonObjectSchema, metadata) ? metadata.bindings : undefined;
+
+  if (bindings === undefined) {
+    return undefined;
+  }
+
+  if (!v.is(JsonObjectSchema, bindings)) {
+    return { block_name: block.name, attribute: 'metadata.bindings', constraint: 'binding_entry' };
+  }
+
+  // Post Date writes a fallback date into an unresolved binding as it mounts,
+  // so only its own read-only date binding is safe.
+  if (block.name === 'core/post-date' && !postDateField(block)) {
+    return {
+      block_name: block.name,
+      attribute: 'metadata.bindings',
+      constraint: 'post_date_binding',
+    };
+  }
+
+  const bindable =
+    wp.data.select('core/block-editor').getSettings?.()
+      .__experimentalBlockBindingsSupportedAttributes?.[block.name] ?? [];
+
+  for (const [attribute, binding] of Object.entries(bindings)) {
+    const issue = {
+      block_name: block.name,
+      attribute: `metadata.bindings.${diagnosticKey(attribute)}`,
+    };
+
+    if (!v.is(BindingSchema, binding)) {
+      return { ...issue, constraint: 'binding_entry' };
+    }
+
+    if (binding.source === 'core/pattern-overrides') {
+      return { ...issue, source: binding.source, constraint: 'pattern_override_operations' };
+    }
+
+    if (!wp.blocks.getBlockBindingsSource?.(binding.source)) {
+      return { ...issue, source: binding.source, constraint: 'registered_binding_source' };
+    }
+
+    const required = requiredArgs.get(binding.source) ?? [];
+    const accepted =
+      binding.source === 'core/post-data' && !authored ? [...required, 'key'] : required;
+
+    if (required.length && !accepted.some((name) => typeof binding.args?.[name] === 'string')) {
+      return {
+        ...issue,
+        source: binding.source,
+        constraint: 'binding_args',
+        required_arg: required[0],
+      };
+    }
+
+    if (!bindable.includes(attribute)) {
+      return {
+        ...issue,
+        constraint: 'bindable_attribute',
+        bindable_attributes: bindable.slice(0, 20).map(diagnosticKey),
+      };
+    }
+  }
+
+  return undefined;
+}
+
+// Attributes whose value a binding supplies rather than the block.
+export function boundAttributes(block: Pick<Block, 'attributes'>): string[] {
+  const metadata = block.attributes.metadata;
+  const bindings = v.is(JsonObjectSchema, metadata) ? metadata.bindings : undefined;
+
+  return v.is(JsonObjectSchema, bindings) ? Object.keys(bindings) : [];
+}
+
+// Custom HTML and Classic content are preserved but never written. Gutenberg
+// keeps Custom HTML in the block's inner content, which block inputs can't carry.
+export function rawContent(name: string): boolean {
+  return ['core/freeform', 'core/html'].includes(name);
 }
 
 export function sharedReference(block: Block): boolean {
@@ -192,7 +291,7 @@ export function readTree(
     } else if (block.isValid === false) {
       reason = 'invalid_block';
       support = 'invalid';
-    } else if (['core/freeform', 'core/html'].includes(block.name)) {
+    } else if (rawContent(block.name)) {
       reason = 'raw_content';
       support = 'unsupported';
     }
@@ -366,7 +465,7 @@ export function editRestriction(
     return { reason: 'unsupported_subtree' };
   }
 
-  if (unsupportedBinding(row)) {
+  if (bindingIssue(wp, row)) {
     return { reason: 'bound_attributes' };
   }
 
@@ -485,7 +584,7 @@ export function removalRestriction(
     return container;
   }
 
-  if (rows.some((other) => containsPath(row.path, other.path) && unsupportedBinding(other))) {
+  if (rows.some((other) => containsPath(row.path, other.path) && bindingIssue(wp, other))) {
     return { reason: 'bound_block_unsupported' };
   }
 
@@ -818,7 +917,7 @@ export async function projectInspection(
           !protectedAttribute &&
           !sharedEntityAttribute &&
           attribute.source !== 'meta' &&
-          !(row && postDateField(row) && key === 'datetime'),
+          !(row && boundAttributes(row).includes(key)),
       };
 
       if (attribute.source === 'meta') {

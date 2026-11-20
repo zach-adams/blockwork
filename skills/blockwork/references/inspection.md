@@ -27,8 +27,9 @@ request validation or currentness checks. When `editable` is false, `reason`
 says why: `pattern_section` (inside an unsynced pattern, `section_client_id`,
 that Gutenberg keeps content-only until explicitly opened), `content_only` (a
 contentOnly template lock or the editor's mode), `editing_disabled` (such as
-while another pattern section is open), `block_locked`, `bound_attributes`,
-`unsupported_subtree`, or a `support` reason. The editing-mode reasons add
+while another pattern section is open), `block_locked`, `bound_attributes` (a
+binding to an unregistered source, an attribute the block can't bind, or a pattern
+override), `unsupported_subtree`, or a `support` reason. The editing-mode reasons add
 Gutenberg's `editing_mode`. A block whose `editing_mode` is `contentOnly` still
 accepts `update` of attributes its `attribute_guide` lists with
 `role: "content"`, such as text, links, and an image's `url` and `alt`, as

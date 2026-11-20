@@ -123,7 +123,8 @@ function fixture(tree = []) {
         attributes: schema,
         providesContext: state.providers[name] ?? (name === 'core/query' ? { query: 'query' } : {}),
       }),
-      getBlockBindingsSource: () => (state.source ? source : undefined),
+      getBlockBindingsSource: (name) =>
+        state.source && name.startsWith('core/') ? source : undefined,
       createBlock: (name, attributes = {}, innerBlocks = []) =>
         block(name, 'created-' + ++counter, attributes, innerBlocks),
       serialize: (blocks) =>
@@ -260,18 +261,12 @@ test('literal datetime stays literal and supplied empty datetime refuses', async
   );
 });
 
-test('caller bindings refuse before native conversion', async () => {
+test('caller post date binding inserts like the native block', async () => {
   const f = fixture();
-  await assert.rejects(
-    f.plan([
-      {
-        op: 'insert',
-        parent: [],
-        block: { name: 'core/post-date', attributes: date().attributes },
-      },
-    ]),
-    (e) => e.code === 'unsupported_attribute',
-  );
+  const plan = await f.plan([
+    { op: 'insert', parent: [], block: { name: 'core/post-date', attributes: date().attributes } },
+  ]);
+  assert.equal(postDateField(plan.blocks[0]), 'date');
 });
 
 test('native modified variation is accepted while caller binding override refuses', async () => {
@@ -307,7 +302,7 @@ test('existing bound style, move and remove remain usable and datetime is read o
   for (const request of [
     { attributes: { datetime: '2026-01-01T00:00:00' }, unset: [] },
     { attributes: {}, unset: [['datetime']] },
-    { attributes: { metadata: { bindings: {} } }, unset: [] },
+    { attributes: { metadata: { bindings: { format: { source: 'core/post-data' } } } }, unset: [] },
   ])
     await assert.rejects(
       f.plan([{ op: 'update', path: [0], name: d.name, ...request }]),
@@ -558,7 +553,7 @@ test('native modified variation retains its binding when caller labels it', asyn
   await assert.rejects(
     f.plan([{ ...request, attributes: { datetime: '' } }]),
     (e) =>
-      e.code === 'unsupported_attribute' && e.diagnostics.constraint === 'bound_datetime_read_only',
+      e.code === 'unsupported_attribute' && e.diagnostics.constraint === 'bound_attribute_read_only',
   );
 });
 

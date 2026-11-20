@@ -95,16 +95,31 @@ so `{style: {spacing: {padding: {top: "32px"}}}}` keeps every other style.
 remove that key, and drop emptied parent objects; a one-key path, or a bare name
 such as `"caption"`, resets the attribute to its registered default. Written values drop nested empty objects,
 as native controls do. Values must match the registered schema. `metadata`
-accepts only `name`, which labels a block in List View, `blockVisibility`, and the
-`patternName` and `categories` members Gutenberg writes when a pattern is inserted,
+accepts `name`, which labels a block in List View, `blockVisibility`, `bindings`, and
+the `patternName` and `categories` members Gutenberg writes when a pattern is inserted,
 so markup from `read` can be sent back. `blockVisibility` is what core's Hide control
 writes: `{viewport: {mobile: false}}` hides a block at that width (`mobile`, `tablet`,
 or `desktop`), `false` hides it everywhere, and `unset: [["metadata","blockVisibility"]]`
 shows it again. A block with `supports.visibility: false` refuses it. An `update` may resend a block's current
-`patternName` but not change or clear it. Other members, such as `bindings`, refuse with
-`diagnostics.attribute` naming the member, such as `metadata.bindings`. An attribute that a
+`patternName` but not change or clear it. Other members refuse with
+`diagnostics.attribute` naming the member. An attribute that a
 block support now stores under `style`, such as `textAlign`, refuses with
 `diagnostics.use_instead` naming its style path.
+
+`bindings` maps an attribute to `{source, args}`, as Gutenberg's Attributes panel
+writes it. A Paragraph inside a Post Template showing each post's job title is
+`{metadata: {bindings: {content: {source: "core/post-meta", args: {key: "job_title"}}}}}`.
+The source must be registered in the editor, and the site must let that block bind
+the attribute; a refusal's `diagnostics.constraint` names the failed check. Writing
+a binding needs the user's `edit_block_binding` capability, which WordPress grants
+to anyone who can edit the post. Bindings that registered patterns and variations
+carry, and a plain Post Date's publish date binding, don't need it.
+`core/post-meta` renders only public keys registered with `show_in_rest` for the
+post type in context, so read `settings: true` on a post of that type to confirm
+the key. Pattern override bindings refuse; edit those through synced pattern
+references. The binding supplies a bound attribute's value, so updating or unsetting
+that attribute refuses with `constraint: "bound_attribute_read_only"`. Write a
+`core/post-meta` value through [`binding_writes`](documents.md#existing-post-meta-bindings).
 
 `block` trees use registered names, attributes, and `inner_blocks`. `markup`
 takes serialized `<!-- wp:… -->` content parsed by the site's registrations;
@@ -464,8 +479,9 @@ exact rules.
   verification and `recover` skip it, so a save WordPress grew past it still
   settles.
 - Structural edits require a fully supported, valid document. On documents with
-  unsupported blocks, only `update` and `update_style` run, and the planner
-  proves that the serialized bytes change only inside the targets.
+  unsupported blocks, which a refusal lists in `diagnostics.unsupported`, only
+  `update` and `update_style` run, and the planner proves that the serialized
+  bytes change only inside the targets.
 - If the saved content does not round-trip through Gutenberg's serializer,
   background `connect` reports `normalization_required: true`. When the stored
   blocks are valid, any deprecated markup keeps its stored HTML, and unsupported
@@ -512,10 +528,11 @@ exact rules.
   children. Automatic empty-template population and nested Post Template
   contexts remain unsupported. `post_date_context_unavailable` identifies the
   affected path and repair step. Preserve the draft if the context cannot resolve.
-- Existing supported Post Date bindings permit unbound style edits and native
-  moves and removals. Bound `datetime` writes and unsets, and caller-supplied
-  binding definitions, refuse. A supplied literal `datetime` stays literal;
-  an empty value cannot request a dynamic date. Never invent a date.
+- Post Date's own binding, as `read` and parsed markup return it, inserts like the
+  native block. Bound Post Dates permit unbound style edits and native moves and
+  removals. Bound `datetime` writes and unsets refuse, and an `insert_variation`
+  cannot replace its variation's binding. A supplied literal `datetime` stays
+  literal; an empty value cannot request a dynamic date. Never invent a date.
 - A File variation without a file URL and a blank Video can hold values native
   serialization cannot preserve. Those placeholder requests remain unsupported.
   Inspect the media record and supply its URL during insertion before binding it;
@@ -539,8 +556,9 @@ exact rules.
 - A blank page's single unmodified default paragraph can be updated, replaced,
   or removed through its client ID.
 - Shared references are leaves; their content is a separate document target.
-  Bound blocks, existing Custom HTML and Classic blocks, and lock changes are
-  out of scope. Classic HTML can still be inserted as blocks through `html`.
+  Custom HTML and Classic blocks, and lock changes, are out of scope. Inserting
+  one refuses with `diagnostics.block_name` and `reason: "raw_content"`. Classic
+  HTML can still be inserted as blocks through `html`.
 - Inserting a Query first reads its editor preview (12-second budget). For an
   inherited Query, Gutenberg ignores taxonomy filters and adjusts the preview
   for supported template slugs. In the post editor without a template context,

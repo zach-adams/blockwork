@@ -124,6 +124,7 @@ export interface EditorStyleSettings extends JsonObject {
   __experimentalBlockBindingsSupportedAttributes?: Record<string, string[]>;
   __experimentalFeatures?: JsonObject;
   canEditCSS?: boolean;
+  canUpdateBlockBindings?: boolean;
   blockStatesEditingEnabled?: boolean;
   responsiveEditingEnabled?: boolean;
 }

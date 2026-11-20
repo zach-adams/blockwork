@@ -260,7 +260,8 @@ fallback markup and binding declaration. The key must be public and present
 under the same name in the writable REST meta schema, the source must allow
 editing, and Gutenberg must support the bound attribute. Ancestors that provide
 another post or query context, and conflicting direct meta writes, refuse. Paths
-address the current tree. Aliased keys, private ACF fields, custom sources, and
-changing binding definitions are unsupported; this browser-level check cannot
+address the current tree. Aliased keys, private ACF fields, and custom sources are
+unsupported. Set or change a binding itself through `metadata.bindings` in an
+[edit](edit.md#edit); this browser-level check cannot
 prove PHP-side registration, filters, or key mapping. Do not present a bound
 fallback attribute as its writable value.

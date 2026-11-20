@@ -275,6 +275,78 @@ test('a binding inside a query cannot write the edited post metadata', async () 
   assert.equal(f.saves, 0);
 });
 
+test('a registered bindable binding inserts, and its bound value stays read only', async () => {
+  const f = fixture();
+  f.registrations['core/paragraph'].attributes.metadata = { type: 'object' };
+  f.editorSettings = { canUpdateBlockBindings: true };
+  f.window.wp.blocks.getBlockBindingsSource = (name) => (name.startsWith('core/') ? {} : undefined);
+  await f.call('connect');
+  const bound = (bindings) => ({ op: 'insert', block: { name: 'core/paragraph', attributes: { metadata: { bindings } } } });
+  const field = { source: 'core/post-meta', args: { key: 'job_title' } };
+  const inserted = await f.edit([bound({ content: field })]);
+  assert.equal(inserted.ok, true, JSON.stringify(inserted));
+  assert.equal((await f.save()).persistence, 'verified');
+  assert.deepEqual(copy(f.blocks.at(-1).attributes.metadata), { bindings: { content: field } });
+
+  const id = f.blocks.at(-1).clientId;
+  const written = await f.edit([{ op: 'update', client_id: id, attributes: { content: 'Fallback' } }]);
+  assert.deepEqual([written.error, written.diagnostics.constraint], ['unsupported_attribute', 'bound_attribute_read_only']);
+  const rebound = await f.edit([{ op: 'update', client_id: id, attributes: { metadata: { bindings: { content: { source: 'core/site-data' } } } } }]);
+  assert.equal(rebound.ok, true, JSON.stringify(rebound));
+  assert.deepEqual(copy(f.blocks.at(-1).attributes.metadata), { bindings: { content: { source: 'core/site-data' } } });
+  assert.equal((await f.edit([{ op: 'remove', client_id: id }])).ok, true);
+
+  for (const [bindings, constraint] of [
+    [{ dropCap: field }, 'bindable_attribute'],
+    [{ content: { source: 'example/unregistered' } }, 'registered_binding_source'],
+    [{ content: { source: 'toString' } }, 'binding_entry'],
+    [{ content: { source: 'core/post-meta' } }, 'binding_args'],
+    [{ content: { source: 'core/post-data', args: { key: 'date' } } }, 'binding_args'],
+    [{ content: { source: 'core/pattern-overrides' } }, 'pattern_override_operations'],
+    [{ content: { source: 'core/post-meta', key: 'job_title' } }, 'binding_entry'],
+  ]) {
+    const refused = await f.edit([bound(bindings)]);
+    assert.deepEqual([refused.error, refused.diagnostics.constraint], ['unsupported_attribute', constraint]);
+  }
+
+  f.editorSettings = { canUpdateBlockBindings: false };
+  const denied = await f.edit([bound({ content: field })]);
+  assert.deepEqual([denied.error, denied.diagnostics.constraint], ['unsupported_attribute', 'block_binding_permission']);
+  assert.equal(f.saves, 1);
+  const content = f.window.wp.blocks.serialize([{ name: 'core/paragraph', attributes: { metadata: { bindings: { content: field } } }, innerBlocks: [] }]);
+  f.patterns = [{ name: 'example/bound', title: 'Bound', content }];
+  const pattern = await f.edit([{ op: 'insert_pattern', pattern: 'example/bound' }]);
+  assert.equal(pattern.ok, true, JSON.stringify(pattern));
+  const rebind = await f.edit([{ op: 'update', client_id: f.blocks.at(-1).clientId, attributes: { metadata: { bindings: { content: { source: 'core/site-data' } } } } }]);
+  assert.equal(rebind.diagnostics.constraint, 'block_binding_permission');
+});
+
+test('raw content refusals name the Custom HTML block', async () => {
+  const f = fixture();
+  const store = f.window.wp.data.select('core/block-editor');
+  const canInsert = store.canInsertBlockType;
+  store.canInsertBlockType = (name, parent) => name === 'core/html' || canInsert(name, parent);
+  await f.call('connect');
+
+  const inserted = await f.edit([{ op: 'insert', block: { name: 'core/html', attributes: { content: '<iframe></iframe>' } } }]);
+  assert.deepEqual(
+    [inserted.error, inserted.diagnostics.block_name, inserted.diagnostics.reason],
+    ['unsupported_block', 'core/html', 'raw_content'],
+  );
+
+  f.blocks.push({ name: 'core/html', clientId: 'html', attributes: { content: 'Raw' }, innerBlocks: [], isValid: true });
+  f.syncContent();
+  await f.call('connect');
+  const raw = [{ path: [f.blocks.length - 1], name: 'core/html', reason: 'raw_content' }];
+  const structural = await f.edit([{ op: 'remove', path: [0], name: 'core/paragraph' }]);
+  assert.equal(structural.error, 'unsupported_structural_edit');
+  assert.deepEqual(copy(structural.diagnostics.unsupported), raw);
+  const settings = await f.call('edit', { post: { title: 'Another title' } });
+  assert.equal(settings.error, 'unsupported_settings_document');
+  assert.deepEqual(copy(settings.diagnostics.unsupported), raw);
+  assert.equal(f.saves, 0);
+});
+
 test('REST GET fixture selects top-level, nested and link fields with parent precedence', async () => {
   const f = fixture();
   f.post.content = { ...f.post.content, rendered: 'Rendered', protected: true, block_version: 1 };
@@ -1667,17 +1739,17 @@ test('update deep merges object members, replaces arrays, then unsets nested val
   assert.equal((await f.save()).persistence, 'verified');
 });
 
-test('metadata labels preserve native members and refuse agent binding writes', async () => {
+test('metadata labels preserve native members and refuse unregistered binding sources', async () => {
   const f = fixture();
   f.registrations['core/paragraph'].attributes.metadata = { type: 'object' };
   f.blocks[0].attributes.metadata = { categories: ['text'], name: 'Before label' };
   f.syncContent(); await f.call('connect');
   assert.equal((await f.call('edit', { edits: [{ op: 'update', client_id: 'a', attributes: { metadata: { name: 'After label' } } }] })).ok, true);
   assert.deepEqual(copy(f.blocks[0].attributes.metadata), { categories: ['text'], name: 'After label' });
-  const refused = await f.call('edit', { edits: [{ op: 'update', client_id: 'a', attributes: { metadata: { name: 'Label', bindings: {} } } }] });
+  const refused = await f.call('edit', { edits: [{ op: 'update', client_id: 'a', attributes: { metadata: { name: 'Label', bindings: { content: { source: 'example/unregistered' } } } } }] });
   assert.equal(refused.error, 'unsupported_attribute');
-  assert.equal(refused.diagnostics.attribute, 'metadata.bindings');
-  assert.equal(refused.diagnostics.constraint, 'allowed_metadata_members_only');
+  assert.equal(refused.diagnostics.attribute, 'metadata.bindings.content');
+  assert.equal(refused.diagnostics.constraint, 'registered_binding_source');
 });
 
 test('markup from an inserted pattern round-trips its metadata members', async () => {

@@ -540,7 +540,10 @@ generated(
                 },
               ],
             });
-            await assertRefused(site, id, before, refused, { error: 'bound_block_unsupported' });
+            const registered = ['core/post-meta', 'blockwork/fixture'].includes(item.source);
+            await assertRefused(site, id, before, refused, {
+              error: registered ? 'unsupported_attribute' : 'bound_block_unsupported',
+            });
           });
         }
 
@@ -1175,6 +1178,41 @@ test('attached save identifies a dirty shared entity left outside page persisten
     },
     { workflow: 'attached' },
   );
+});
+
+test('a Paragraph bound to post meta inserts into a Query Post Template', async () => {
+  await seedDocument(site, {
+    title: 'BlockworkBoundFixture',
+    content: paragraph('Bound fixture'),
+    meta: { bw_shared_field: 'Fixture field' },
+  });
+  const binding = { source: 'core/post-meta', args: { key: 'bw_shared_field' } };
+  const markup =
+    `<!-- wp:query ${JSON.stringify(query({ postType: 'page', search: 'BlockworkBoundFixture' }).attributes)} -->\n` +
+    '<div class="wp-block-query"><!-- wp:post-template -->\n<!-- wp:post-title /-->\n\n' +
+    `<!-- wp:paragraph ${JSON.stringify({ metadata: { bindings: { content: binding } } })} -->\n` +
+    '<p></p>\n<!-- /wp:paragraph -->\n<!-- /wp:post-template --></div>\n<!-- /wp:query -->';
+
+  await withDocument(site, { content: paragraph('Anchor') }, async ({ blockwork, id, before }) => {
+    const inserted = await blockwork.edit({ edits: [{ op: 'insert', markup }] });
+    assert.equal(inserted.ok, true, JSON.stringify(inserted));
+    const saved = await assertSavedCleanly(site, id, before, await blockwork.save());
+    assert.match(saved.after.content, /"bindings":\{"content":\{"source":"core\/post-meta"/);
+
+    const read = await blockwork.read({ blocks: { name: 'core/paragraph', attributes: true } });
+    const row = read.blocks?.find((item) => item.attributes?.metadata?.bindings);
+    assert.ok(row, JSON.stringify(read));
+    const written = await blockwork.edit({
+      edits: [{ op: 'update', client_id: row.client_id, attributes: { content: 'Fallback' } }],
+    });
+    await assertRefused(site, id, saved.after, written, { error: 'unsupported_attribute' });
+    assert.equal(written.diagnostics.constraint, 'bound_attribute_read_only');
+    const styled = await blockwork.edit({
+      edits: [{ op: 'update', client_id: row.client_id, attributes: { className: 'job-title' } }],
+    });
+    assert.equal(styled.ok, true, JSON.stringify(styled));
+    await assertSavedCleanly(site, id, saved.after, await blockwork.save());
+  });
 });
 
 test('binding writes reject a custom source and a foreign Query context', async () => {

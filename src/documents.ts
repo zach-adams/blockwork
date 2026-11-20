@@ -355,9 +355,11 @@ export async function prepareSettings(
   }
 
   if (Object.keys(values).length) {
-    const blocks = documentBlocks(wp);
-    const rows = readTree(wp, blocks);
-    assert(validity(rows).valid, 'unsupported_settings_document');
+    const status = validity(readTree(wp, documentBlocks(wp)));
+    assert(status.valid, 'unsupported_settings_document', {
+      unsupported: status.unsupported.slice(0, 5),
+      invalid: status.invalid.slice(0, 5),
+    });
   }
 
   return {
